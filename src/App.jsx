@@ -1,3 +1,4 @@
+import { SearchDebounced, SearchOptimized, SearchWithLag } from "./components/SearchWithlag";
 import { ControlledForm } from "./components/ControlledForm";
 import { Counter } from "./components/Counter";
 import { Dashboard } from "./components/Dashboard";
@@ -35,7 +36,12 @@ function App() {
       {/* <RefVsState/> */}
       {/* <Stopwatch/> */}
       {/* <StopWatchPro/> */}
-      <ProductSearch/>
+      {/* Day 16 — useDeferredValue */}
+      {/* <SearchWithLag/> */}
+      {/* <SearchOptimized /> */}
+      <SearchDebounced/>
+      
+      {/* <ProductSearch/> */}
 
     </>
   );

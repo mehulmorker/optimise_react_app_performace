@@ -6,7 +6,7 @@ const generateItems = (count) => {
     id: i + 1,
     name: `Product ${i + 1}`,
     category: ["Electronics", "Clothing", "Food", "Books", "Sports"][i % 5],
-    price: Math.round(Math.random() * 10000) / 100,
+    price: Math.round(Math.random() * 100000) / 100,
     rating: Math.round(Math.random() * 50) / 10,
     inStock: Math.random() > 0.3,
   }));

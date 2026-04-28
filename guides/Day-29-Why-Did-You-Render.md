@@ -42,7 +42,7 @@ npm install @welldone-software/why-did-you-render --save-dev
 Create a file that runs before any React component code:
 
 ```js
-// src/wdyr.js  (import this FIRST in src/index.js or src/main.jsx)
+// src/wdyr.js  (import this FIRST in src/main.jsx)
 import React from 'react';
 
 if (process.env.NODE_ENV === 'development') {
@@ -57,14 +57,34 @@ if (process.env.NODE_ENV === 'development') {
 ```
 
 ```js
-// src/index.js or src/main.jsx — FIRST import
-import './wdyr';
+// src/main.jsx — FIRST import must be ./wdyr before anything React-related
+import './wdyr';   // ← must be the very first line
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import './index.css';
 
 ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 ```
+
+> **Vite note:** Vite uses native ES modules. Import order in ES modules is honoured at the file level — `import './wdyr'` being first in `main.jsx` ensures it runs before React. However, `wdyr.js` itself uses `require()` (CommonJS). If you get a `require is not defined` error, use this Vite-compatible alternative instead:
+>
+> ```js
+> // src/wdyr.js — Vite-compatible version
+> import React from 'react';
+> import whyDidYouRender from '@welldone-software/why-did-you-render';
+>
+> if (import.meta.env.DEV) {
+>   whyDidYouRender(React, {
+>     trackAllPureComponents: false,
+>     trackHooks: true,
+>     logOnDifferentValues: true,
+>     collapseGroups: true,
+>   });
+> }
+> ```
+>
+> And update `main.jsx` to use `import.meta.env.DEV` instead of `process.env.NODE_ENV === 'development'`.
 
 ### Step 3 — Opt a component in to tracking
 
@@ -130,7 +150,43 @@ const handleAddToCart = useCallback((id) => {
 }, []); // no deps — setCart is stable
 ```
 
-Add to cart again. The WDYR log is gone — `ProductCard` no longer rerenders on parent state change.
+Add to cart again. The WDYR log for `onAddToCart` is gone. But you may still see a WDYR log for `product`:
+
+```
+ProductCard
+Re-rendered because of props changes:
+  - product: [object] !== [object]
+    (same value, different reference)
+```
+
+This is because `products` is defined as a literal array **inside** `ProductList` — a new array (with new object references) is created on every render. Fix it by moving `products` outside the component:
+
+```jsx
+// Move this OUTSIDE ProductList (module level — created once)
+const PRODUCTS = [
+  { id: 1, name: 'Widget', price: 9.99 },
+  { id: 2, name: 'Gadget', price: 14.99 },
+];
+
+function ProductList() {
+  const [cart, setCart] = useState([]);
+
+  const handleAddToCart = useCallback((id) => {
+    setCart(prev => [...prev, id]);
+  }, []);
+
+  return (
+    <div>
+      <p>Cart: {cart.length} items</p>
+      {PRODUCTS.map(p => (
+        <ProductCard key={p.id} product={p} onAddToCart={handleAddToCart} />
+      ))}
+    </div>
+  );
+}
+```
+
+Now `PRODUCTS` is a stable module-level constant. Add to cart — zero WDYR logs. Both prop instability issues are resolved.
 
 ### Step 6 — Tracking object prop instability
 

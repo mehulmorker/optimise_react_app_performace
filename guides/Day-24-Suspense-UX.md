@@ -30,29 +30,103 @@ Move beyond basic Suspense to understand how to design great loading experiences
 
 ## Exercise Task
 
-### Step 1 — The FOFC problem
+### Setup — Before you start
+
+**1. Add CSS animation to `src/index.css`:**
+
+```css
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+```
+
+**2. Create `src/components/FastComponent.jsx`** — a simple component to demonstrate the FOFC problem:
 
 ```jsx
-const FastComponent = lazy(() =>
-  new Promise(resolve => setTimeout(() => resolve(import('./FastComponent')), 50))
-);
-
-function App() {
+// src/components/FastComponent.jsx
+export default function FastComponent() {
   return (
-    <Suspense fallback={<div>Loading...</div>}>
-      <FastComponent />
-    </Suspense>
+    <div style={{ padding: 16, background: '#f0fff0', border: '1px solid #0a0', borderRadius: 4 }}>
+      <h3>Fast Component</h3>
+      <p>This component loaded quickly!</p>
+    </div>
   );
 }
 ```
 
-For a 50ms load:
-- Shows "Loading..." for 50ms
-- Flashes to actual content
+**3. Reuse page files from Day 23.** Steps 3 and 4 use `HomePage` and `DashboardPage`. These were created in Day 23 (`src/pages/`). If you skipped Day 23, create minimal versions now:
 
-This spinner flash is worse than showing nothing — it creates an unnecessary visual pop.
+```jsx
+// src/pages/HomePage.jsx
+export default function HomePage() {
+  return <div style={{ padding: 20 }}><h2>Home Page</h2></div>;
+}
+
+// src/pages/DashboardPage.jsx
+export default function DashboardPage() {
+  return <div style={{ padding: 20 }}><h2>Dashboard</h2></div>;
+}
+```
+
+**4. Create `src/components/SuspenseUXDemo.jsx`** with these imports:
+
+```jsx
+import React, { lazy, Suspense, useState, useEffect, useTransition } from 'react';
+```
+
+**5. Define a `Spinner` component** at the top of `SuspenseUXDemo.jsx` (used throughout):
+
+```jsx
+function Spinner() {
+  return <div style={{ padding: 8, color: '#888' }}>Loading...</div>;
+}
+```
+
+**6. Define a `PageLoading` component** (used in Step 3):
+
+```jsx
+function PageLoading() {
+  return (
+    <div style={{ padding: 20 }}>
+      <div style={{ height: 40, background: '#f0f0f0', marginBottom: 16, borderRadius: 4 }} />
+      <div style={{ height: 200, background: '#f0f0f0', borderRadius: 4 }} />
+    </div>
+  );
+}
+```
+
+---
+
+### Step 1 — The FOFC problem
+
+Add this to `SuspenseUXDemo.jsx`. Note: the `setTimeout` wrapper artificially delays the import by 50ms to simulate a fast load. `FastComponent.jsx` itself is not slow — the delay is in the lazy wrapper.
+
+```jsx
+const FastComponentLazy = lazy(() =>
+  new Promise(resolve => setTimeout(() => resolve(import('./FastComponent')), 50))
+);
+
+export function FOFCDemo() {
+  const [show, setShow] = useState(false);
+  return (
+    <div style={{ padding: 16 }}>
+      <button onClick={() => setShow(true)}>Show Fast Component</button>
+      {show && (
+        <Suspense fallback={<Spinner />}>
+          <FastComponentLazy />
+        </Suspense>
+      )}
+    </div>
+  );
+}
+```
+
+Click "Show Fast Component." You'll see "Loading..." flash briefly before the component appears. For a 50ms load, this spinner flash is worse than showing nothing — it creates an unnecessary visual pop.
 
 ### Step 2 — Delayed fallback
+
+Replace the `FOFCDemo` export (or add a new export) in `SuspenseUXDemo.jsx`:
 
 ```jsx
 function DelayedFallback({ delay = 300, fallback, children }) {
@@ -70,16 +144,24 @@ function DelayedFallback({ delay = 300, fallback, children }) {
   );
 }
 
-// Usage
-<DelayedFallback delay={300} fallback={<Spinner />}>
-  <FastComponent />
-</DelayedFallback>
+export function DelayedFallbackDemo() {
+  const [show, setShow] = useState(false);
+  return (
+    <div style={{ padding: 16 }}>
+      <button onClick={() => setShow(true)}>Show (with delayed fallback)</button>
+      {show && (
+        <DelayedFallback delay={300} fallback={<Spinner />}>
+          <FastComponentLazy />
+        </DelayedFallback>
+      )}
+    </div>
+  );
+}
 ```
 
-If the component loads within 300ms: no spinner ever shown.
-If it takes longer: spinner appears at 300ms and stays until loaded.
+Click the button. If the component loads within 300ms: no spinner ever shows. If it takes longer: spinner appears at 300ms.
 
-**Alternative: CSS approach**
+**Alternative: CSS approach** (no `useState`/`useEffect` needed — add to `SuspenseUXDemo.jsx`):
 
 ```jsx
 function FadeInFallback({ children }) {
@@ -97,24 +179,26 @@ function FadeInFallback({ children }) {
 }
 ```
 
-```css
-@keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-```
+The `animation-fill-mode: both` + `animation-delay: 0.3s` means the spinner is invisible for 300ms, then fades in. If the component loads in < 300ms, the spinner never becomes visible.
 
 ### Step 3 — startTransition + Suspense (hold old UI)
 
-Without transition, navigating to a lazy-loaded page immediately shows the Suspense fallback (and hides the current page):
+Add this to `SuspenseUXDemo.jsx`. It uses `HomePage` and `DashboardPage` from Day 23 (import them):
 
 ```jsx
-function App() {
+import { lazy, Suspense, useState, useTransition } from 'react';
+
+const HomePage = lazy(() => import('../pages/HomePage'));
+const DashboardPage = lazy(() => import('../pages/DashboardPage'));
+
+// Without transition — shows fallback immediately on navigate
+export function NavigationWithoutTransition() {
   const [page, setPage] = useState('home');
 
   return (
     <div>
-      <nav>
+      <nav style={{ display: 'flex', gap: 8, padding: 8, borderBottom: '1px solid #eee' }}>
+        <button onClick={() => setPage('home')}>Home</button>
         <button onClick={() => setPage('dashboard')}>Dashboard</button>
       </nav>
       <Suspense fallback={<PageLoading />}>
@@ -124,14 +208,9 @@ function App() {
     </div>
   );
 }
-```
 
-Clicking Dashboard: immediately hides HomePage, shows PageLoading fallback. Not ideal.
-
-With `useTransition`:
-
-```jsx
-function App() {
+// With transition — old page stays visible while new page loads
+export function NavigationWithTransition() {
   const [page, setPage] = useState('home');
   const [isPending, startTransition] = useTransition();
 
@@ -141,14 +220,15 @@ function App() {
 
   return (
     <div>
-      <nav>
+      <nav style={{ display: 'flex', gap: 8, padding: 8, borderBottom: '1px solid #eee' }}>
+        <button onClick={() => navigate('home')}>Home</button>
         <button onClick={() => navigate('dashboard')} disabled={isPending}>
           Dashboard {isPending && '...'}
         </button>
       </nav>
 
       {/* Old page stays visible while new page loads */}
-      <div style={{ opacity: isPending ? 0.7 : 1 }}>
+      <div style={{ opacity: isPending ? 0.7 : 1, transition: 'opacity 0.2s' }}>
         <Suspense fallback={null}> {/* No fallback needed — old UI shows instead */}
           {page === 'home' && <HomePage />}
           {page === 'dashboard' && <DashboardPage />}
@@ -159,31 +239,64 @@ function App() {
 }
 ```
 
-With `startTransition`:
-- Old page stays visible (with slight opacity) while new page's chunk loads
-- `isPending` is `true` during loading — show indicator in navigation, not as a full replacement
-- When chunk loads AND component finishes rendering, new page appears atomically
+Compare `NavigationWithoutTransition` vs `NavigationWithTransition`: in the first, clicking Dashboard immediately replaces the Home page with `PageLoading`. In the second, Home stays visible (slightly dimmed) until Dashboard is ready.
 
 ### Step 4 — Nested Suspense for progressive loading
 
+This step shows the architectural pattern. Create minimal stub components first, then wrap them in separate Suspense boundaries:
+
 ```jsx
-function DashboardPage() {
+// Minimal stubs — add to SuspenseUXDemo.jsx
+function DashboardHeader() {
+  return <h2 style={{ padding: 16 }}>Dashboard Header (loaded immediately)</h2>;
+}
+
+function StatsSkeleton() {
+  return <div style={{ height: 80, background: '#f0f0f0', margin: 16, borderRadius: 4 }} />;
+}
+
+function ChartSkeleton() {
+  return <div style={{ height: 200, background: '#f0f0f0', margin: 16, borderRadius: 4 }} />;
+}
+
+function ActivitySkeleton() {
+  return <div style={{ height: 120, background: '#f0f0f0', margin: 16, borderRadius: 4 }} />;
+}
+
+// Simulate lazy-loaded sections with artificial delays
+const DashboardStats = lazy(() =>
+  new Promise(resolve => setTimeout(() => resolve({
+    default: () => <div style={{ padding: 16, background: '#e8f5e9', margin: 16, borderRadius: 4 }}>Stats loaded!</div>
+  }), 800))
+);
+
+const DashboardChart = lazy(() =>
+  new Promise(resolve => setTimeout(() => resolve({
+    default: () => <div style={{ padding: 16, background: '#e3f2fd', margin: 16, borderRadius: 4 }}>Chart loaded!</div>
+  }), 1500))
+);
+
+const RecentActivity = lazy(() =>
+  new Promise(resolve => setTimeout(() => resolve({
+    default: () => <div style={{ padding: 16, background: '#fff3e0', margin: 16, borderRadius: 4 }}>Activity loaded!</div>
+  }), 600))
+);
+
+export function ProgressiveDashboard() {
   return (
     <div>
       {/* Header loads immediately (not lazy) */}
       <DashboardHeader />
 
-      {/* Stats can load independently */}
+      {/* Each section loads independently */}
       <Suspense fallback={<StatsSkeleton />}>
-        <DashboardStats />  {/* lazy loaded */}
+        <DashboardStats />
       </Suspense>
 
-      {/* Chart loads independently, doesn't block stats */}
       <Suspense fallback={<ChartSkeleton />}>
-        <DashboardChart />  {/* lazy loaded, heavy */}
+        <DashboardChart />
       </Suspense>
 
-      {/* Recent activity loads independently */}
       <Suspense fallback={<ActivitySkeleton />}>
         <RecentActivity />
       </Suspense>
@@ -192,16 +305,16 @@ function DashboardPage() {
 }
 ```
 
-Each section loads independently. Header appears immediately. Stats, chart, and activity each show their skeleton while loading, then reveal progressively. The page never shows a blank full-page spinner.
+Observe: Header appears immediately. Stats, Chart, Activity each show their skeleton while loading, then reveal progressively. The page never shows a blank full-page spinner.
 
 ### Step 5 — Skeleton screens
 
-Skeleton screens maintain layout and reduce perceived loading time:
+Add to `SuspenseUXDemo.jsx`:
 
 ```jsx
 function ProductCardSkeleton() {
   return (
-    <div className="card">
+    <div style={{ border: '1px solid #eee', borderRadius: 8, overflow: 'hidden' }}>
       <div style={{
         width: '100%',
         height: 200,
@@ -209,20 +322,22 @@ function ProductCardSkeleton() {
         backgroundSize: '200% 100%',
         animation: 'shimmer 1.5s infinite',
       }} />
-      <div style={{ height: 20, background: '#f0f0f0', margin: '12px 0', width: '80%' }} />
-      <div style={{ height: 16, background: '#f0f0f0', width: '60%' }} />
+      <div style={{ padding: 12 }}>
+        <div style={{ height: 20, background: '#f0f0f0', marginBottom: 8, width: '80%', borderRadius: 4 }} />
+        <div style={{ height: 16, background: '#f0f0f0', width: '60%', borderRadius: 4 }} />
+      </div>
     </div>
   );
 }
+```
 
-// Use in Suspense
-<Suspense fallback={
-  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-    {Array.from({ length: 6 }, (_, i) => <ProductCardSkeleton key={i} />)}
-  </div>
-}>
-  <ProductGrid />
-</Suspense>
+Add to `src/index.css`:
+
+```css
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
 ```
 
 The skeleton has the same dimensions as the actual content — **no layout shift** when content appears.

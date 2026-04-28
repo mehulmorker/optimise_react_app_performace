@@ -29,10 +29,27 @@ Understand `useTransition` — React 18's mechanism for marking state updates as
 
 ## Exercise Task
 
+Create a new file: `src/components/TabSwitcher.jsx`
+
+### Setup — Before you start
+
+Add this at the top of the file. These are all the imports and shared helpers used across all steps.
+
+```jsx
+import React, { useState, useTransition } from 'react';
+
+// Shared helper — reference this in any step below
+function Spinner() {
+  return <span style={{ marginLeft: 6 }}>⏳</span>;
+}
+```
+
+---
+
 ### Step 1 — Build the heavy tab switcher (unoptimized)
 
 ```jsx
-function TabSwitcher() {
+export function TabSwitcher() {
   const [tab, setTab] = useState('home');
 
   return (
@@ -55,7 +72,6 @@ function AboutTab() { return <div>About Content</div>; }
 
 function PostsTab() {
   console.log('PostsTab rendered');
-  // Simulate 500 expensive items
   return (
     <ul>
       {Array.from({ length: 500 }, (_, i) => (
@@ -66,19 +82,22 @@ function PostsTab() {
 }
 
 function SlowPost({ index }) {
-  // Simulate expensive render
   let total = 0;
   for (let i = 0; i < 5000; i++) total += i;
   return <li>Post {index + 1} (sum: {total})</li>;
 }
 ```
 
-Click the **Posts** tab. The entire UI freezes until the 500 `SlowPost` components render. The button you clicked doesn't even animate/depress visually — the browser is blocked.
+Render `<TabSwitcher />` in `App.jsx` and click the **Posts** tab. The entire UI freezes until the 500 `SlowPost` components render. The button you clicked doesn't even visually depress — the browser is blocked.
+
+---
 
 ### Step 2 — Add useTransition
 
+**Replace `TabSwitcher`** with this updated version. The other components (`HomeTab`, `AboutTab`, `PostsTab`, `SlowPost`) stay the same.
+
 ```jsx
-function TabSwitcher() {
+export function TabSwitcher() {
   const [tab, setTab] = useState('home');
   const [isPending, startTransition] = useTransition();
 
@@ -105,7 +124,6 @@ function TabSwitcher() {
         </button>
       </div>
 
-      {/* Show spinner while transition is pending */}
       {isPending && <div>Loading...</div>}
 
       <div style={{ opacity: isPending ? 0.6 : 1 }}>
@@ -120,19 +138,44 @@ function TabSwitcher() {
 
 Click **Posts** again. The button click is registered immediately (buttons show slight opacity change). The current tab stays visible with reduced opacity. "Loading..." appears. Then the posts tab finishes rendering and replaces the content.
 
+---
+
 ### Step 3 — Interrupt a transition
+
+This is an **observation step** — no code change needed. Just interact with `TabSwitcher` from Step 2.
 
 Click **Posts** (heavy render starts), then immediately click **About** (light render).
 
 With `startTransition`, the Posts render is interrupted. React switches to rendering About immediately — because user input (clicking About) is more urgent than the in-progress Posts transition.
 
-This is the **interruptibility** of concurrent transitions.
+This is the **interruptibility** of concurrent transitions. You'll see "Loading..." disappear and "About Content" appear almost instantly even though Posts hadn't finished.
 
-### Step 4 — Compare isPending usage
+---
+
+### Step 4 — Per-button isPending (alternative pattern)
+
+This is a **separate standalone component**, not a modification of `TabSwitcher` from Step 2. It shows a different pattern where each button tracks its own pending state.
 
 ```jsx
-// Button variant: show specific loading state per tab
-function TabButton({ label, tabName, currentTab, onSelect }) {
+// Separate export — add this to the same file
+export function TabSwitcherPerButton() {
+  const [tab, setTab] = useState('home');
+
+  return (
+    <div>
+      <div>
+        <TabButton label="Home" tabName="home" onSelect={setTab} />
+        <TabButton label="Posts" tabName="posts" onSelect={setTab} />
+        <TabButton label="About" tabName="about" onSelect={setTab} />
+      </div>
+      {tab === 'home' && <HomeTab />}
+      {tab === 'posts' && <PostsTab />}
+      {tab === 'about' && <AboutTab />}
+    </div>
+  );
+}
+
+function TabButton({ label, tabName, onSelect }) {
   const [isPending, startTransition] = useTransition();
 
   const handleClick = () => {
@@ -148,26 +191,53 @@ function TabButton({ label, tabName, currentTab, onSelect }) {
 }
 ```
 
-With this pattern, each button has its own `isPending` — only the clicked button shows a spinner, not all tabs.
+With this pattern, each button has its own `isPending` — only the clicked button shows a spinner, not all tabs. This is often better UX.
+
+---
 
 ### Step 5 — What you cannot put in startTransition
 
+No runnable component needed — this is a code review of correct vs incorrect patterns. Read these carefully before writing any transitions:
+
 ```jsx
 // WRONG — synchronous DOM input must not be in transition
+// The input will lag visually — user sees their keystroke delayed
 startTransition(() => {
-  setInputValue(e.target.value); // this should be urgent, not transition
+  setInputValue(e.target.value);
 });
 
 // CORRECT — only mark the heavy downstream render as transition
 const handleInputChange = (e) => {
-  setInputValue(e.target.value); // urgent — immediate
+  setInputValue(e.target.value);        // urgent — immediate
   startTransition(() => {
-    setFilterQuery(e.target.value); // transition — heavy render
+    setFilterQuery(e.target.value);     // transition — heavy render
   });
 };
 ```
 
 State that directly controls user input must stay urgent. Only state that drives expensive rendering should go inside `startTransition`.
+
+---
+
+### Final file structure
+
+After all steps, your file should have this top-to-bottom order:
+
+```
+imports (React, useState, useTransition)
+
+Spinner (helper)
+
+TabSwitcher         (export — Steps 1 → 2)
+TabSwitcherPerButton (export — Step 4)
+TabButton           (used by TabSwitcherPerButton)
+HomeTab
+AboutTab
+PostsTab
+SlowPost
+```
+
+Render both `<TabSwitcher />` and `<TabSwitcherPerButton />` in `App.jsx` to compare the two pending patterns.
 
 ---
 
@@ -177,7 +247,7 @@ State that directly controls user input must stay urgent. Only state that drives
 - With transition: UI stays interactive, buttons respond, old tab shows during render
 - `isPending`: true while transition is in progress, false when complete
 - Interrupting: clicking About while Posts is rendering cancels the Posts render
-- Transitions batch together — multiple `startTransition` calls within a handler combine
+- Per-button pattern: only the clicked button shows a spinner
 
 ---
 

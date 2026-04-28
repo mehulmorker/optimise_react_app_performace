@@ -31,6 +31,20 @@ Learn to use the React DevTools Profiler to record renders, read flame charts an
 
 ## Exercise Task
 
+### Setup — Before you start
+
+Create `src/components/ProfilerDemo.jsx` with these imports:
+
+```jsx
+import React, { useState, useCallback, useMemo, Profiler } from 'react';
+```
+
+The `Profiler` import is for Step 8. You can add it now so it doesn't cause an error later.
+
+> **Note on intentional bugs:** Steps 2–6 deliberately contain broken code so you can observe the problems in the Profiler. Step 7 fixes them. Do NOT fix the problems before profiling — the point is to see them in the Profiler first.
+
+---
+
 ### Step 1 — Install React DevTools
 
 React DevTools is a browser extension:
@@ -40,6 +54,8 @@ React DevTools is a browser extension:
 After installing, open DevTools (F12) → you'll see a **Components** tab and a **Profiler** tab.
 
 ### Step 2 — Build a deliberately slow component tree
+
+Create `src/components/ProfilerDemo.jsx` with this code. There are **three intentional performance problems** built in — you will find them using the Profiler in Steps 4–6, then fix them all in Step 7.
 
 ```jsx
 // A component that does expensive work on every render
@@ -60,13 +76,19 @@ function SlowItem({ item, onSelect, selectedId }) {
   );
 }
 
-function ProductList() {
+// Intentional bug 1: products created INSIDE the component
+// → new array on every render, new item objects = React.memo can't bail out
+// Intentional bug 2: Math.random() prices change on every render
+// → even the data is unstable
+// Intentional bug 3: onSelect is setSelectedId inline, not useCallback
+// → new function reference on every render
+export function ProductList() {
   const [selectedId, setSelectedId] = useState(null);
   const [filter, setFilter] = useState('');
   const products = Array.from({ length: 100 }, (_, i) => ({
     id: i,
     name: `Product ${i}`,
-    price: (Math.random() * 100).toFixed(2),
+    price: (Math.random() * 100).toFixed(2), // new random price every render!
   }));
 
   return (

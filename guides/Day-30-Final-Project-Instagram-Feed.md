@@ -30,6 +30,185 @@ Build in layers. Verify each layer before moving to the next.
 
 ---
 
+### Setup — Before you start
+
+**1. Install packages:**
+
+```bash
+npm install react-window react-virtualized-auto-sizer
+```
+
+**2. Create the folder structure:**
+
+```
+src/
+  components/
+    PostCardView.jsx
+    PostCard.jsx
+    LazyImage.jsx
+    VirtualFeed.jsx
+    StoriesBar.jsx
+    StoryViewer.jsx      ← lazy-loaded, create minimal version
+  contexts/
+    AuthContext.jsx
+    ThemeContext.jsx
+  hooks/
+    useFeedPosts.js
+    usePostCard.js
+```
+
+**3. Define the `useLocalStorage` hook** (used by `ThemeProvider`). Create `src/hooks/useLocalStorage.js`:
+
+```js
+import { useState } from 'react';
+
+export function useLocalStorage(key, initialValue) {
+  const [stored, setStored] = useState(() => {
+    try {
+      const item = window.localStorage.getItem(key);
+      return item ? JSON.parse(item) : initialValue;
+    } catch {
+      return initialValue;
+    }
+  });
+
+  const setValue = (value) => {
+    const valueToStore = typeof value === 'function' ? value(stored) : value;
+    setStored(valueToStore);
+    try { window.localStorage.setItem(key, JSON.stringify(valueToStore)); } catch {}
+  };
+
+  return [stored, setValue];
+}
+```
+
+**4. Add the mock data and API** (no backend needed). Create `src/data/mockFeed.js`:
+
+```js
+// 50 mock posts — replace Layer 2's real fetch with this
+export const MOCK_POSTS = Array.from({ length: 50 }, (_, i) => ({
+  id: `post_${i}`,
+  author: {
+    id: `user_${i % 8}`,
+    username: `user${i % 8}`,
+    avatar: `https://i.pravatar.cc/40?u=user${i % 8}`,
+  },
+  imageUrl: `https://picsum.photos/seed/post${i}/400/400`,
+  caption: `Caption for post ${i + 1}. Check out this awesome photo! #react #coding`,
+  likeCount: Math.floor(Math.random() * 500) + 10,
+  likedByCurrentUser: false,
+  savedByCurrentUser: false,
+}));
+
+// Simulates GET /api/feed?page=N&limit=10
+export function mockFetchFeed(page, limit = 10) {
+  return new Promise(resolve => {
+    setTimeout(() => {
+      const start = (page - 1) * limit;
+      const posts = MOCK_POSTS.slice(start, start + limit);
+      resolve({ posts, hasMore: start + limit < MOCK_POSTS.length });
+    }, 600);
+  });
+}
+```
+
+**5. Define placeholder components** — create these stub files now. You'll build them properly as you reach each layer.
+
+```jsx
+// src/components/StoryViewer.jsx — create this NOW (it's lazy-loaded, must exist)
+export default function StoryViewer({ story, onClose }) {
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+      <div style={{ color: 'white', textAlign: 'center' }}>
+        <p>Story by @{story.username}</p>
+        <button onClick={onClose} style={{ background: 'white', color: 'black', padding: '8px 16px', borderRadius: 4, border: 'none', cursor: 'pointer' }}>Close</button>
+      </div>
+    </div>
+  );
+}
+```
+
+**6. Define shared stub components** — add these to `src/components/shared.jsx` (or inline where used):
+
+```jsx
+// src/components/shared.jsx
+export function Spinner() {
+  return <div style={{ padding: 16, textAlign: 'center', color: '#888' }}>Loading...</div>;
+}
+
+export function BrokenCardPlaceholder() {
+  return <div style={{ padding: 16, background: '#fff3cd', textAlign: 'center' }}>This post failed to load.</div>;
+}
+
+export function PostImageSkeleton() {
+  return <div style={{ width: '100%', aspectRatio: '1/1', background: '#f0f0f0' }} />;
+}
+
+export function StoryViewerSkeleton() {
+  return <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spinner /></div>;
+}
+
+export function TopBar() {
+  return <header style={{ padding: '8px 16px', borderBottom: '1px solid #eee', fontWeight: 'bold' }}>Instagram</header>;
+}
+
+export function ErrorState({ message }) {
+  return <div style={{ padding: 16, color: '#c00' }}>Error: {message}</div>;
+}
+```
+
+**7. Define `STORY_USERS`** — the stories bar needs this data. Add to `src/data/mockFeed.js`:
+
+```js
+export const STORY_USERS = Array.from({ length: 8 }, (_, i) => ({
+  id: `user_${i}`,
+  username: `user${i}`,
+  avatar: `https://i.pravatar.cc/56?u=user${i}`,
+}));
+```
+
+**8. Define `StoryAvatar`** — add to `src/components/shared.jsx`:
+
+```jsx
+export function StoryAvatar({ user, onClick, onMouseEnter }) {
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={onMouseEnter}
+      style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', padding: 4 }}
+    >
+      <img
+        src={user.avatar}
+        alt={user.username}
+        style={{ width: 56, height: 56, borderRadius: '50%', border: '2px solid #e1306c' }}
+      />
+      <span style={{ fontSize: 11 }}>{user.username}</span>
+    </button>
+  );
+}
+```
+
+**9. Define `ErrorBoundary`** — add to `src/components/ErrorBoundary.jsx` (the class from Day 27):
+
+```jsx
+import React from 'react';
+
+export class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(error, info) { console.error('ErrorBoundary:', error, info.componentStack); }
+  render() {
+    if (this.state.hasError) return this.props.fallback ?? <div>Something went wrong.</div>;
+    return this.props.children;
+  }
+}
+```
+
+---
+
 ### Layer 1: Context architecture
 
 ```jsx
@@ -61,6 +240,8 @@ export const useCurrentUser = () => useContext(AuthStateContext);
 export const useAuthActions = () => useContext(AuthActionsContext);
 
 // contexts/ThemeContext.jsx
+import { useLocalStorage } from '../hooks/useLocalStorage';
+
 const ThemeContext = createContext(null);
 
 export function ThemeProvider({ children }) {
@@ -84,7 +265,10 @@ export const useTheme = () => useContext(ThemeContext);
 
 ```jsx
 // hooks/useFeedPosts.js
-function useFeedPosts() {
+import { useState, useEffect, useCallback } from 'react';
+import { mockFetchFeed } from '../data/mockFeed';
+
+export function useFeedPosts() {
   const [posts, setPosts] = useState([]);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
@@ -92,22 +276,17 @@ function useFeedPosts() {
   const [error, setError] = useState(null);
 
   const fetchPage = useCallback(async (pageNum) => {
-    const controller = new AbortController();
     setLoading(true);
     try {
-      const res = await fetch(`/api/feed?page=${pageNum}&limit=10`, {
-        signal: controller.signal,
-      });
-      const data = await res.json();
+      const data = await mockFetchFeed(pageNum);
       setPosts(prev => pageNum === 1 ? data.posts : [...prev, ...data.posts]);
       setHasMore(data.hasMore);
       setPage(pageNum);
     } catch (err) {
-      if (err.name !== 'AbortError') setError(err.message);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
-    return () => controller.abort();
   }, []);
 
   useEffect(() => { fetchPage(1); }, [fetchPage]);
@@ -122,11 +301,22 @@ function useFeedPosts() {
 }
 ```
 
+> In a real app, replace `mockFetchFeed` with `fetch('/api/feed?page=N')`. The `AbortController` pattern from Day 21 should be added for production use to cancel stale requests.
+```
+
 ### Layer 3: Card logic hook (smart layer)
 
 ```jsx
 // hooks/usePostCard.js
-function usePostCard(post) {
+import { useState, useCallback } from 'react';
+import { useCurrentUser } from '../contexts/AuthContext';
+
+// Mock API helpers — replace with real fetch in production
+const mockLike = (postId, liked) => new Promise(r => setTimeout(r, 200));
+const mockSave = (postId, saved) => new Promise(r => setTimeout(r, 200));
+const mockComment = (postId, text) => new Promise(r => setTimeout(r, 300));
+
+export function usePostCard(post) {
   const currentUser = useCurrentUser();
   const [liked, setLiked] = useState(post.likedByCurrentUser ?? false);
   const [likeCount, setLikeCount] = useState(post.likeCount ?? 0);
@@ -137,10 +327,8 @@ function usePostCard(post) {
     const newLiked = !liked;
     setLiked(newLiked);
     setLikeCount(c => newLiked ? c + 1 : c - 1);
-    await fetch(`/api/posts/${post.id}/like`, {
-      method: newLiked ? 'POST' : 'DELETE',
-    }).catch(() => {
-      // Revert on failure
+    await mockLike(post.id, newLiked).catch(() => {
+      // Revert on failure (optimistic update pattern)
       setLiked(!newLiked);
       setLikeCount(c => newLiked ? c - 1 : c + 1);
     });
@@ -149,20 +337,15 @@ function usePostCard(post) {
   const toggleSave = useCallback(async () => {
     const newSaved = !saved;
     setSaved(newSaved);
-    await fetch(`/api/posts/${post.id}/save`, {
-      method: newSaved ? 'POST' : 'DELETE',
-    }).catch(() => setSaved(!newSaved));
+    await mockSave(post.id, newSaved).catch(() => setSaved(!newSaved));
   }, [saved, post.id]);
 
   const submitComment = useCallback(async () => {
     if (!commentText.trim()) return;
     const text = commentText;
     setCommentText('');
-    await fetch(`/api/posts/${post.id}/comments`, {
-      method: 'POST',
-      body: JSON.stringify({ text, userId: currentUser.id }),
-    });
-  }, [commentText, post.id, currentUser.id]);
+    await mockComment(post.id, text);
+  }, [commentText, post.id]);
 
   return {
     liked, likeCount, saved, commentText,
@@ -170,6 +353,9 @@ function usePostCard(post) {
     onCommentChange: setCommentText,
   };
 }
+```
+
+> `currentUser` is imported but not used in the mock version. In production you'd pass `currentUser.id` in the comment payload to the real API.
 ```
 
 ### Layer 4: Dumb card view

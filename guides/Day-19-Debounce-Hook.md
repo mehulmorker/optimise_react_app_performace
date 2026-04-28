@@ -23,44 +23,91 @@ Build a `useDebounce` custom hook from scratch, understand why debouncing exists
 - Why you need the cleanup function (cancel pending debounce on new input)
 - `useDebounce` for API calls vs `useDeferredValue` for rendering
 - Building a `useSearchQuery` hook that combines debounce + fetch + AbortController
-- The React Query alternative pattern
+- Race conditions and how AbortController solves them
 
 ---
 
 ## Exercise Task
 
+Create a new file: `src/components/DebounceSearch.jsx`
+
+### Setup — Before you start
+
+Since this exercise focuses on debouncing, not backend setup, use this **mock fetch function** instead of a real API. It simulates network delay and returns filtered local data.
+
+```jsx
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+
+// Local dataset — simulates what an API would return
+const MOCK_DATA = Array.from({ length: 1000 }, (_, i) => ({
+  id: i + 1,
+  name: `Product ${i + 1}`,
+  category: ['Electronics', 'Books', 'Sports', 'Clothing', 'Food'][i % 5],
+}));
+
+// Simulated API: returns matching items after a 400ms "network delay"
+function mockFetch(query, signal) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      if (signal?.aborted) {
+        reject(new DOMException('Aborted', 'AbortError'));
+        return;
+      }
+      const results = MOCK_DATA.filter(item =>
+        item.name.toLowerCase().includes(query.toLowerCase()) ||
+        item.category.toLowerCase().includes(query.toLowerCase())
+      );
+      resolve(results);
+    }, 400);
+
+    signal?.addEventListener('abort', () => {
+      clearTimeout(timer);
+      reject(new DOMException('Aborted', 'AbortError'));
+    });
+  });
+}
+```
+
+---
+
 ### Step 1 — Show the problem without debounce
 
 ```jsx
-function SearchWithoutDebounce() {
+export function SearchWithoutDebounce() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
+  const callCount = useRef(0);
 
   useEffect(() => {
-    if (!query) return;
-    console.log(`API call for: "${query}"`);
-    // Simulated API call
-    fetch(`/api/search?q=${query}`)
-      .then(r => r.json())
-      .then(setResults);
+    if (!query) { setResults([]); return; }
+
+    callCount.current++;
+    console.log(`API call #${callCount.current} for: "${query}"`);
+
+    mockFetch(query).then(setResults);
   }, [query]);
 
   return (
     <div>
+      <h3>Without Debounce</h3>
       <input
         value={query}
         onChange={e => setQuery(e.target.value)}
         placeholder="Search..."
       />
-      <p>{results.length} results</p>
+      <p>{results.length} results (check console for API call count)</p>
     </div>
   );
 }
 ```
 
-Type "react" (5 characters). Watch the console — 5 API calls: "r", "re", "rea", "reac", "react". Only the last one matters. The first 4 are wasted requests.
+Type "react" (5 characters). Watch the console — 5 "API call" logs appear: for "r", "re", "rea", "reac", "react". Only the last one matters. The first 4 are wasted requests.
+
+---
 
 ### Step 2 — Build useDebounce from scratch
+
+Add this hook to the same file, above the components:
 
 ```jsx
 function useDebounce(value, delay = 300) {
@@ -82,19 +129,22 @@ function useDebounce(value, delay = 300) {
 
 How it works:
 - User types "r": timer scheduled for 300ms
-- User types "re" (50ms later): previous timer cancelled, new timer scheduled
+- User types "re" (50ms later): previous timer **cancelled**, new timer scheduled
 - User types "rea" (50ms later): timer cancelled again
 - User pauses for 300ms: timer fires, `debouncedValue` updates to "rea"
 - User resumes with "reac", "react": same pattern
 - User pauses: `debouncedValue` updates to "react"
 
+---
+
 ### Step 3 — Use useDebounce in search
 
 ```jsx
-function SearchWithDebounce() {
+export function SearchWithDebounce() {
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebounce(query, 300);
   const [results, setResults] = useState([]);
+  const callCount = useRef(0);
 
   useEffect(() => {
     if (!debouncedQuery) {
@@ -102,20 +152,20 @@ function SearchWithDebounce() {
       return;
     }
 
-    console.log(`API call for: "${debouncedQuery}"`);
-    fetch(`/api/search?q=${debouncedQuery}`)
-      .then(r => r.json())
-      .then(setResults);
+    callCount.current++;
+    console.log(`API call #${callCount.current} for: "${debouncedQuery}"`);
+    mockFetch(debouncedQuery).then(setResults);
   }, [debouncedQuery]); // only fires after user pauses 300ms
 
   return (
     <div>
+      <h3>With Debounce (300ms)</h3>
       <input
         value={query}
         onChange={e => setQuery(e.target.value)}
         placeholder="Search..."
       />
-      <p>{results.length} results</p>
+      <p>{results.length} results (should see only 1 API call for "react")</p>
     </div>
   );
 }
@@ -123,12 +173,14 @@ function SearchWithDebounce() {
 
 Type "react" quickly. Only **one API call** fires — after the user stops typing for 300ms.
 
+---
+
 ### Step 4 — Add AbortController for correctness
 
 What if the user types fast, pauses, types more, pauses again? Two API calls fire. The second one might resolve before the first (network timing). You'd show results from the first (stale) query.
 
 ```jsx
-function SearchComplete() {
+export function SearchComplete() {
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebounce(query, 300);
   const [results, setResults] = useState([]);
@@ -143,34 +195,41 @@ function SearchComplete() {
     const controller = new AbortController();
     setLoading(true);
 
-    fetch(`/api/search?q=${debouncedQuery}`, { signal: controller.signal })
-      .then(r => r.json())
+    mockFetch(debouncedQuery, controller.signal)
       .then(data => {
         setResults(data);
         setLoading(false);
       })
       .catch(err => {
-        if (err.name === 'AbortError') return;
+        if (err.name === 'AbortError') return; // cancelled — ignore silently
         setLoading(false);
       });
 
-    return () => controller.abort(); // cancel if debouncedQuery changes
+    return () => controller.abort(); // cancel if debouncedQuery changes before fetch completes
   }, [debouncedQuery]);
 
   return (
     <div>
-      <input value={query} onChange={e => setQuery(e.target.value)} />
-      {loading && <span>Searching...</span>}
-      <ul>{results.map(r => <li key={r.id}>{r.name}</li>)}</ul>
+      <h3>With Debounce + AbortController</h3>
+      <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search..." />
+      {loading && <span> Searching...</span>}
+      <p>{results.length} results</p>
+      <ul>
+        {results.slice(0, 10).map(r => <li key={r.id}>{r.name} — {r.category}</li>)}
+      </ul>
     </div>
   );
 }
 ```
 
+To observe the race condition fix: type something, pause briefly (first fetch starts), then type more and pause again (second fetch starts). Without `controller.abort()`, the first fetch could overwrite the second's results. With it, the first fetch is cancelled when `debouncedQuery` changes.
+
+---
+
 ### Step 5 — Extract useSearchQuery custom hook
 
 ```jsx
-function useSearchQuery(endpoint, query, delay = 300) {
+function useSearchQuery(query, delay = 300) {
   const debouncedQuery = useDebounce(query, delay);
   const [state, setState] = useState({ data: [], loading: false, error: null });
 
@@ -183,13 +242,7 @@ function useSearchQuery(endpoint, query, delay = 300) {
     const controller = new AbortController();
     setState(s => ({ ...s, loading: true, error: null }));
 
-    fetch(`${endpoint}?q=${encodeURIComponent(debouncedQuery)}`, {
-      signal: controller.signal,
-    })
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
+    mockFetch(debouncedQuery, controller.signal)
       .then(data => setState({ data, loading: false, error: null }))
       .catch(err => {
         if (err.name === 'AbortError') return;
@@ -197,25 +250,44 @@ function useSearchQuery(endpoint, query, delay = 300) {
       });
 
     return () => controller.abort();
-  }, [endpoint, debouncedQuery]);
+  }, [debouncedQuery]);
 
   return state;
 }
 
-// Usage:
-function ProductSearch() {
+export function SearchWithHook() {
   const [query, setQuery] = useState('');
-  const { data, loading, error } = useSearchQuery('/api/products', query, 300);
+  const { data, loading, error } = useSearchQuery(query, 300);
 
   return (
     <div>
-      <input value={query} onChange={e => setQuery(e.target.value)} />
+      <h3>useSearchQuery hook</h3>
+      <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search..." />
       {loading && <p>Loading...</p>}
-      {error && <p>Error: {error}</p>}
-      <ul>{data.map(p => <li key={p.id}>{p.name}</li>)}</ul>
+      {error && <p style={{ color: 'red' }}>Error: {error}</p>}
+      <ul>{data.slice(0, 10).map(p => <li key={p.id}>{p.name}</li>)}</ul>
     </div>
   );
 }
+```
+
+---
+
+### Final file structure
+
+```
+imports (React, useState, useEffect, useCallback, useRef)
+
+MOCK_DATA (module-level data)
+mockFetch (simulation helper)
+
+useDebounce (hook — Step 2)
+useSearchQuery (hook — Step 5)
+
+SearchWithoutDebounce  (export — Step 1)
+SearchWithDebounce     (export — Step 3)
+SearchComplete         (export — Step 4)
+SearchWithHook         (export — Step 5)
 ```
 
 ---
@@ -224,9 +296,9 @@ function ProductSearch() {
 
 - Without debounce: API call on every keystroke (5 calls for "react")
 - With debounce: API call only after user pauses (1 call for "react")
-- Cleanup in useDebounce: each new value cancels the previous timer
+- Cleanup in useDebounce: each new value cancels the previous timer (check console)
 - AbortController: racing responses from multiple pauses are cancelled correctly
-- useSearchQuery: clean composable abstraction
+- useSearchQuery: clean composable abstraction — clean component code
 
 ---
 
@@ -284,7 +356,7 @@ fetch B: resolves with correct results
 
 **Challenge 3:** Build a `useThrottledSearch` variant that makes API calls at most once per 500ms but always makes the final call.
 
-**Challenge 4:** Implement optimistic results — show local filtered results (from previous results) immediately while the debounced API call is in-flight.
+**Challenge 4:** Implement optimistic results — show local filtered results immediately while the debounced API call is in-flight.
 
 ---
 
@@ -306,7 +378,7 @@ const debouncedSearch = debounce((e) => setQuery(e.target.value), 300);
 <input onChange={debouncedSearch} />
 ```
 
-The input's value is read 300ms after the user typed. The synthetic event may have been recycled (React 17 SyntheticEvent pooling). Read the value immediately, debounce the side effect:
+Read the value immediately, debounce the side effect:
 
 ```jsx
 const [query, setQuery] = useState('');
@@ -410,7 +482,7 @@ User pauses → fetch A starts. User types more, pauses → fetch B starts. A re
 Typically 200-400ms for search. 300ms is a common default — allows fast typists to continue without lag while still catching "pause" points. For expensive backend queries, 500ms. For instant validation (username check), 200ms. Test with real users.
 
 **9. Debounce value not handler?**
-Event handlers receive synthetic events. In React 17, synthetic events are pooled and recycled — reading `event.target.value` inside a debounced callback (300ms later) may return incorrect data. More fundamentally, the value should be captured immediately (state), and the effect (API call) should be debounced.
+Event handlers receive synthetic events. Reading `event.target.value` inside a debounced callback (300ms later) may return unexpected data. More fundamentally, the value should be captured immediately (state), and the effect (API call) should be debounced.
 
 **10. useSearchQuery value?**
 `useDebounce` only delays state updates. `useSearchQuery` adds: AbortController for cancellation, loading state, error handling, fetch lifecycle management. It's a complete "search with network" abstraction, not just a timing utility.

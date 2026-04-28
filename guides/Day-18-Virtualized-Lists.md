@@ -31,24 +31,33 @@ Understand why rendering 5,000+ DOM nodes is fundamentally different from render
 
 ## Exercise Task
 
+Create a new file: `src/components/VirtualizedList.jsx`
+
+### Setup — Before you start
+
+```jsx
+import React, { useState, useMemo, useCallback } from 'react';
+
+// Shared data — generated once outside any component
+const ALL_ITEMS = Array.from({ length: 5000 }, (_, i) => ({
+  id: i,
+  name: `Item ${i}`,
+  description: `Description for item ${i}`,
+  value: Math.round(Math.random() * 100000) / 100,
+}));
+```
+
+---
+
 ### Step 1 — Build the naive 5,000-item list
 
 ```jsx
-function NaiveList() {
-  const items = useMemo(() =>
-    Array.from({ length: 5000 }, (_, i) => ({
-      id: i,
-      name: `Item ${i}`,
-      description: `Description for item ${i}`,
-      value: Math.random() * 1000,
-    })),
-  []);
-
+export function NaiveList() {
   console.time('render');
 
   const result = (
     <div style={{ height: '600px', overflow: 'auto' }}>
-      {items.map(item => (
+      {ALL_ITEMS.map(item => (
         <div key={item.id} style={{ height: '50px', borderBottom: '1px solid #eee', padding: '10px' }}>
           <strong>{item.name}</strong>: {item.description} — ${item.value.toFixed(2)}
         </div>
@@ -61,11 +70,13 @@ function NaiveList() {
 }
 ```
 
-Open this page. Observe:
-1. Initial render time (console.time)
+Render `<NaiveList />` in `App.jsx`. Open this page and observe:
+1. Initial render time in console (`console.time`)
 2. Memory usage in DevTools Memory panel
 3. Scrolling performance (FPS meter in Performance panel)
-4. DOM node count (DevTools Elements panel — count the children)
+4. DOM node count in DevTools Elements panel
+
+---
 
 ### Step 2 — Measure the DOM cost
 
@@ -73,30 +84,32 @@ Open DevTools → Console:
 
 ```js
 document.querySelectorAll('[data-list-item]').length
-// or check Elements panel — count div children
+// Or in Elements panel: count the children of the scroll container div
 ```
 
-5,000 DOM nodes visible in the DOM tree. Each one:
+5,000 DOM nodes are in the tree. Each one:
 - Allocated in browser memory
 - Participates in layout recalculations
 - Gets painted on initial render
 - Participates in hit testing on every mouse move
 
+---
+
 ### Step 3 — Implement basic virtualization from scratch
 
-Understand the concept before using a library:
+Understand the concept before using a library. Add this component to the same file:
 
 ```jsx
-function VirtualizedList({ items, itemHeight = 50, windowHeight = 600 }) {
+export function VirtualizedListBasic({ itemHeight = 50, windowHeight = 600 }) {
   const [scrollTop, setScrollTop] = useState(0);
 
-  const totalHeight = items.length * itemHeight;
+  const totalHeight = ALL_ITEMS.length * itemHeight;
   const visibleCount = Math.ceil(windowHeight / itemHeight);
   const startIndex = Math.floor(scrollTop / itemHeight);
-  const endIndex = Math.min(startIndex + visibleCount + 2, items.length - 1);
+  const endIndex = Math.min(startIndex + visibleCount + 2, ALL_ITEMS.length - 1);
   // +2 for buffer (partial items at edges)
 
-  const visibleItems = items.slice(startIndex, endIndex + 1);
+  const visibleItems = ALL_ITEMS.slice(startIndex, endIndex + 1);
   const offsetY = startIndex * itemHeight; // padding-top to position visible items
 
   return (
@@ -106,7 +119,7 @@ function VirtualizedList({ items, itemHeight = 50, windowHeight = 600 }) {
     >
       {/* Inner container = full height to enable correct scrollbar */}
       <div style={{ height: totalHeight, position: 'relative' }}>
-        {/* Visible items, offset to their correct position */}
+        {/* Visible items, offset to their correct scroll position */}
         <div style={{ transform: `translateY(${offsetY}px)` }}>
           {visibleItems.map(item => (
             <div
@@ -125,30 +138,41 @@ function VirtualizedList({ items, itemHeight = 50, windowHeight = 600 }) {
 
 This renders only `visibleCount + 2` items regardless of total list size. Scroll performance is now O(1) with respect to list length.
 
+---
+
 ### Step 4 — Use react-window (production approach)
+
+First, install `react-window`:
 
 ```bash
 npm install react-window
 ```
 
+Then add these imports at the top of your file:
+
 ```jsx
 import { FixedSizeList } from 'react-window';
+```
 
-function RowRenderer({ index, style }) {
-  const item = items[index];
+> **Important:** `RowRenderer` accesses items through `data.items` — passed via `itemData`. If you write `const item = ALL_ITEMS[index]` directly, it works too (closure), but the `itemData` approach is required for `React.memo` to work correctly (Step 6). Use `itemData` from the start.
+
+```jsx
+function RowRenderer({ index, style, data }) {
+  const item = data[index]; // accessed from itemData, not a closure
   return (
-    <div style={style} key={item.id}>
-      <strong>{item.name}</strong>: {item.value.toFixed(2)}
+    <div style={style}>
+      <strong>{item.name}</strong>: ${item.value.toFixed(2)}
     </div>
   );
 }
 
-function VirtualList() {
+export function VirtualList() {
   return (
     <FixedSizeList
-      height={600}        // viewport height
-      itemCount={5000}    // total items
-      itemSize={50}       // row height in px
+      height={600}           // viewport height in px
+      itemCount={ALL_ITEMS.length}  // total items
+      itemSize={50}          // each row height in px
+      itemData={ALL_ITEMS}   // passed as 'data' prop to RowRenderer
       width="100%"
     >
       {RowRenderer}
@@ -159,35 +183,43 @@ function VirtualList() {
 
 `FixedSizeList` handles scroll tracking, buffer zones, and DOM recycling. Only ~15-20 DOM nodes exist at any time regardless of list size.
 
+---
+
 ### Step 5 — Variable height rows
 
 ```jsx
 import { VariableSizeList } from 'react-window';
+// Add to the existing import at the top:
+// import { FixedSizeList, VariableSizeList } from 'react-window';
 
-const getItemSize = (index) => {
-  // Some rows are taller
-  return index % 10 === 0 ? 100 : 50;
-};
+// Some rows are taller (every 10th item)
+const getItemSize = (index) => index % 10 === 0 ? 100 : 50;
 
-function VariableList() {
+export function VariableList() {
   return (
     <VariableSizeList
       height={600}
-      itemCount={5000}
-      itemSize={getItemSize}
+      itemCount={ALL_ITEMS.length}
+      itemSize={getItemSize}    // function instead of number
+      itemData={ALL_ITEMS}
       width="100%"
     >
-      {({ index, style }) => (
-        <div style={style}>Row {index}</div>
+      {({ index, style, data }) => (
+        <div style={style}>{data[index].name}</div>
       )}
     </VariableSizeList>
   );
 }
 ```
 
+---
+
 ### Step 6 — Combine with React.memo
 
+**Replace `RowRenderer`** from Step 4 with this memoized version. It must be defined at module level (not inside another component) for `React.memo` to work:
+
 ```jsx
+// REPLACE the RowRenderer from Step 4 with this
 const RowRenderer = React.memo(function RowRenderer({ index, style, data }) {
   const item = data[index];
   console.log(`Row ${index} rendered`);
@@ -197,17 +229,32 @@ const RowRenderer = React.memo(function RowRenderer({ index, style, data }) {
     </div>
   );
 });
-
-// Pass data via itemData to avoid inline object prop breaking memo
-<FixedSizeList
-  height={600}
-  itemCount={items.length}
-  itemSize={50}
-  itemData={items}  // passed as 'data' prop to row renderer
->
-  {RowRenderer}
-</FixedSizeList>
 ```
+
+> **Why itemData must be stable:** If you pass `ALL_ITEMS` directly as `itemData`, the reference is stable (it's a module-level constant). But if `itemData` were an object or array created inside a component, it would be a new reference every render — `React.memo` on `RowRenderer` would fail because `data` prop always changes. Keep `itemData` as a stable reference (module-level constant or `useMemo`).
+
+---
+
+### Final file structure
+
+After all steps, your file has this order:
+
+```
+imports (React, useState, FixedSizeList, VariableSizeList)
+
+ALL_ITEMS (module-level data — stable reference)
+
+getItemSize (module-level function — stable reference)
+
+RowRenderer (React.memo — updated in Step 6)
+
+NaiveList        (export — Step 1)
+VirtualizedListBasic (export — Step 3)
+VirtualList      (export — Step 4)
+VariableList     (export — Step 5)
+```
+
+Render all four in `App.jsx` to compare them side by side.
 
 ---
 
@@ -217,7 +264,7 @@ const RowRenderer = React.memo(function RowRenderer({ index, style, data }) {
 - Virtualized list: ~20 DOM nodes at all times, fast render, smooth scroll
 - Browser memory: significant reduction with virtualization
 - React DevTools: Component count dramatically reduced
-- React.memo + react-window: visible rows don't rerender on scroll
+- React.memo + react-window: visible rows don't rerender on scroll (check console logs)
 
 ---
 
@@ -267,8 +314,8 @@ This means: constant ~20 DOM nodes regardless of list size. Scroll performance i
 **Challenge 2:** Implement infinite scroll with react-window. Load more items when the user scrolls near the end.
 
 ```jsx
-function onScroll({ scrollOffset, scrollUpdateWasRequested }) {
-  const nearBottom = scrollOffset > (items.length * itemHeight - containerHeight - 200);
+function onItemsRendered({ visibleStopIndex }) {
+  const nearBottom = visibleStopIndex >= items.length - 10;
   if (nearBottom && !loading) loadMore();
 }
 ```
@@ -365,7 +412,7 @@ It tracks `scrollTop` and computes `firstVisibleIndex = floor(scrollTop / itemHe
 Roughly `visibleCount + 2 * overscan`. For a 600px container with 50px rows: ~12 visible + 6 overscan = ~18 DOM nodes. The number is constant regardless of total list size.
 
 **6. itemData for memo compatibility?**
-If you pass data inline as a prop to react-window, like `<FixedSizeList itemData={{ items, onDelete }}>`, the object is new on every parent render. `React.memo` on the row component sees a new `data` prop and rerenders. Pass a stable reference (memoize with `useMemo`).
+If you pass data inline as a prop to react-window, like `<FixedSizeList itemData={{ items, onDelete }}>`, the object is new on every parent render. `React.memo` on the row component sees a new `data` prop and rerenders. Pass a stable reference (module-level constant or `useMemo`).
 
 **7. Overscan?**
 Extra items rendered beyond the visible viewport edge — typically 3-5 items. Without overscan, fast scrolling causes a "flash of empty" as items aren't rendered fast enough. Overscan pre-renders nearby items to ensure they're ready before they scroll into view.
@@ -403,7 +450,7 @@ Infinite scroll requires pagination: maintain a `page` or `cursor`, load more it
 - Virtualization: only render visible items + small buffer
 - Total DOM nodes stays ~constant (~20) regardless of list size
 - react-window: FixedSizeList (same height) vs VariableSizeList (function)
-- itemData must be stable (useMemo) for React.memo on rows to work
+- itemData must be stable (module-level constant or useMemo) for React.memo on rows to work
 - Overscan: buffer beyond visible range to prevent scroll blanks
 - When to virtualize: >200-500 items with measurable performance issue
 

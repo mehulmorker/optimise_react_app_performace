@@ -30,6 +30,49 @@ Master the container/presentational pattern: separating stateful logic from UI r
 
 ## Exercise Task
 
+### Setup — Before you start
+
+Create `src/components/SmartDumbDemo.jsx` with these imports:
+
+```jsx
+import React, { useState, useEffect, useCallback } from 'react';
+```
+
+Add this mock data and mock API **at the top of the file** (module level). This replaces real backend calls so the component works without a server:
+
+```jsx
+const MOCK_USERS = {
+  user_1: { name: 'Alice Johnson', email: 'alice@example.com' },
+  user_2: { name: 'Bob Smith', email: 'bob@example.com' },
+  user_3: { name: 'Carol White', email: 'carol@example.com' },
+};
+
+// Simulates GET /api/users/:id — resolves with user data after 500ms delay
+function mockFetchUser(userId) {
+  return new Promise((resolve, reject) => {
+    setTimeout(() => {
+      const user = MOCK_USERS[userId];
+      if (user) resolve({ ...user }); // return a copy
+      else reject(new Error(`User ${userId} not found`));
+    }, 500);
+  });
+}
+
+// Simulates PATCH /api/users/:id — resolves after 300ms delay
+function mockPatchUser(userId, data) {
+  return new Promise(resolve => {
+    setTimeout(() => {
+      MOCK_USERS[userId] = { ...data }; // mutate mock store
+      resolve({ ...data });
+    }, 300);
+  });
+}
+```
+
+Use `userId="user_1"` when rendering: `<UserProfileContainer userId="user_1" />`.
+
+---
+
 ### Step 1 — The mixed (anti-pattern) component
 
 ```jsx
@@ -42,8 +85,7 @@ function UserProfile({ userId }) {
   const [draft, setDraft] = useState({});
 
   useEffect(() => {
-    fetch(`/api/users/${userId}`)
-      .then(r => r.json())
+    mockFetchUser(userId)
       .then(data => {
         setUser(data);
         setDraft(data);
@@ -56,10 +98,7 @@ function UserProfile({ userId }) {
   }, [userId]);
 
   const handleSave = async () => {
-    await fetch(`/api/users/${userId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(draft),
-    });
+    await mockPatchUser(userId, draft);
     setUser(draft);
     setIsEditing(false);
   };
@@ -107,8 +146,7 @@ function useUserProfile(userId) {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`/api/users/${userId}`)
-      .then(r => r.json())
+    mockFetchUser(userId)
       .then(data => {
         setUser(data);
         setDraft(data);
@@ -132,10 +170,7 @@ function useUserProfile(userId) {
   }, []);
 
   const save = useCallback(async () => {
-    await fetch(`/api/users/${userId}`, {
-      method: 'PATCH',
-      body: JSON.stringify(draft),
-    });
+    await mockPatchUser(userId, draft);
     setUser(draft);
     setIsEditing(false);
   }, [userId, draft]);

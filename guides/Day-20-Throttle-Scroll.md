@@ -31,10 +31,22 @@ Understand why scroll events are a performance hazard when handled naively, how 
 
 ## Exercise Task
 
+Create a new file: `src/components/ScrollDemo.jsx`
+
+### Setup — Before you start
+
+```jsx
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+```
+
+> **Note on Step 1:** `ScrollFlood` creates a `div` with `height: 5000px` to generate scrollable content. For the scroll event to fire, this component must be placed inside a page that can scroll (not inside a fixed-height container). Render it directly at the top level in `App.jsx`.
+
+---
+
 ### Step 1 — Show the scroll event flood
 
 ```jsx
-function ScrollFlood() {
+export function ScrollFlood() {
   const eventCount = useRef(0);
   const [renderCount, setRenderCount] = useState(0);
 
@@ -51,9 +63,10 @@ function ScrollFlood() {
 
   return (
     <div style={{ height: '5000px' }}>
-      <div style={{ position: 'fixed', top: 0 }}>
-        Scroll events: {renderCount}
+      <div style={{ position: 'fixed', top: 0, background: 'white', padding: '8px 12px', zIndex: 10 }}>
+        Scroll events fired: {renderCount}
       </div>
+      <p style={{ paddingTop: 60 }}>Scroll down to see the event counter increase</p>
     </div>
   );
 }
@@ -61,7 +74,11 @@ function ScrollFlood() {
 
 Scroll slowly through the page. In 1 second, you may see 60-100 scroll events logged. Each one triggers a rerender — 60 rerenders per second is 60fps of React rendering just from scrolling.
 
+---
+
 ### Step 2 — Build timestamp-based throttle
+
+Add this hook above the components:
 
 ```jsx
 function useThrottle(value, interval = 200) {
@@ -91,6 +108,8 @@ function useThrottle(value, interval = 200) {
 }
 ```
 
+---
+
 ### Step 3 — Build useScrollPosition hook with throttle
 
 ```jsx
@@ -107,6 +126,8 @@ function useScrollPosition(throttleMs = 100) {
       setScrollY(window.scrollY);
     };
 
+    // { passive: true } — tells the browser "this handler won't call preventDefault()"
+    // The browser can scroll immediately without waiting for JS — critical for smooth scrolling
     window.addEventListener('scroll', handleScroll, { passive: true });
     return () => window.removeEventListener('scroll', handleScroll);
   }, [throttleMs]);
@@ -115,7 +136,7 @@ function useScrollPosition(throttleMs = 100) {
 }
 ```
 
-Note `{ passive: true }` — tells the browser "this handler won't call `preventDefault()`." The browser can then scroll immediately without waiting for JavaScript to respond. Critical for smooth scrolling.
+---
 
 ### Step 4 — Build requestAnimationFrame throttle
 
@@ -133,6 +154,7 @@ function useScrollPositionRAF() {
         });
         ticking.current = true;
       }
+      // If ticking is true, skip — a RAF is already scheduled
     };
 
     window.addEventListener('scroll', handleScroll, { passive: true });
@@ -145,28 +167,42 @@ function useScrollPositionRAF() {
 
 The `ticking` flag ensures only one `requestAnimationFrame` is queued at a time. This naturally throttles updates to 60fps (one per frame) — synchronized with the browser's repaint cycle.
 
+---
+
 ### Step 5 — Apply to practical use cases
 
+These components use `useScrollPositionRAF` from Step 4. Add them to the same file:
+
 ```jsx
-function StickyHeader() {
-  const scrollY = useScrollPositionRAF();
+export function StickyHeader() {
+  const scrollY = useScrollPositionRAF(); // hook from Step 4
   const isSticky = scrollY > 80;
 
   return (
-    <header style={{
-      position: isSticky ? 'fixed' : 'relative',
-      top: 0,
-      background: isSticky ? 'white' : 'transparent',
-      boxShadow: isSticky ? '0 2px 8px rgba(0,0,0,0.1)' : 'none',
-      transition: 'background 0.2s, box-shadow 0.2s',
-    }}>
-      Navigation
-    </header>
+    <>
+      <header style={{
+        position: isSticky ? 'fixed' : 'relative',
+        top: 0,
+        width: '100%',
+        background: isSticky ? 'white' : 'transparent',
+        boxShadow: isSticky ? '0 2px 8px rgba(0,0,0,0.1)' : 'none',
+        transition: 'background 0.2s, box-shadow 0.2s',
+        padding: '12px 16px',
+        zIndex: 10,
+      }}>
+        Navigation — scrollY: {scrollY}px {isSticky ? '(sticky)' : ''}
+      </header>
+      {/* Spacer so content doesn't jump under fixed header */}
+      {isSticky && <div style={{ height: 44 }} />}
+      <div style={{ height: '3000px', paddingTop: 20 }}>
+        <p>Scroll down past 80px to see the sticky header</p>
+      </div>
+    </>
   );
 }
 
-function ReadingProgress() {
-  const scrollY = useScrollPositionRAF();
+export function ReadingProgress() {
+  const scrollY = useScrollPositionRAF(); // hook from Step 4
   const [progress, setProgress] = useState(0);
 
   useEffect(() => {
@@ -176,43 +212,55 @@ function ReadingProgress() {
   }, [scrollY]);
 
   return (
-    <div style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      height: '3px',
-      width: `${progress}%`,
-      background: 'blue',
-      transition: 'width 0.1s',
-    }} />
+    <div style={{ paddingTop: 8 }}>
+      <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        height: '3px',
+        width: `${progress}%`,
+        background: '#0070f3',
+        transition: 'width 0.1s',
+        zIndex: 100,
+      }} />
+      <div style={{ height: '4000px' }}>
+        <p>Scroll to see reading progress bar at the top</p>
+      </div>
+    </div>
   );
 }
 ```
 
+---
+
 ### Step 6 — IntersectionObserver (often better than scroll)
 
-For "element is visible" checks, `IntersectionObserver` is more efficient than scroll + position math:
+For "element is visible" checks, `IntersectionObserver` is more efficient than scroll + position math. It runs off the main thread — no scroll event overhead.
+
+> **Important:** The `options` object passed to `useInView` must be stable. If you pass `{ threshold: 0.1 }` inline at the call site (a new object every render), the `useEffect` dependency will change every render, causing the observer to reconnect on every render. Fix: pass a memoized options object or use a primitive.
 
 ```jsx
-function useInView(ref, options = {}) {
+function useInView(ref, threshold = 0) {
+  // Accept threshold as a primitive (not an object) to avoid dependency instability
   const [inView, setInView] = useState(false);
 
   useEffect(() => {
     const observer = new IntersectionObserver(
       ([entry]) => setInView(entry.isIntersecting),
-      options
+      { threshold }
     );
 
-    if (ref.current) observer.observe(ref.current);
+    const el = ref.current;
+    if (el) observer.observe(el);
     return () => observer.disconnect();
-  }, [ref, options]);
+  }, [ref, threshold]); // threshold is a number — stable as a primitive
 
   return inView;
 }
 
-function LoadMoreTrigger({ onLoadMore }) {
+export function LoadMoreTrigger({ onLoadMore }) {
   const ref = useRef(null);
-  const inView = useInView(ref, { threshold: 0.1 });
+  const inView = useInView(ref, 0.1);
 
   useEffect(() => {
     if (inView) onLoadMore();
@@ -226,14 +274,34 @@ function LoadMoreTrigger({ onLoadMore }) {
 
 ---
 
+### Final file structure
+
+```
+imports (React, useState, useEffect, useRef, useCallback)
+
+useThrottle          (hook — Step 2)
+useScrollPosition    (hook — Step 3)
+useScrollPositionRAF (hook — Step 4)
+useInView            (hook — Step 6)
+
+ScrollFlood     (export — Step 1)
+StickyHeader    (export — Step 5)
+ReadingProgress (export — Step 5)
+LoadMoreTrigger (export — Step 6)
+```
+
+Render `<StickyHeader />` and `<ReadingProgress />` separately (not on the same page) — both need a full-page scroll context.
+
+---
+
 ## What To Observe
 
-- Without throttle: 60-100 scroll events/second → 60 rerenders/second
+- Without throttle: 60-100 scroll events/second → 60 rerenders/second (Step 1)
 - With timestamp throttle (200ms): max 5 updates/second
 - With RAF throttle: max 60 updates/second, synced with paint cycle
-- `{ passive: true }`: enables browser scroll optimizations
+- `{ passive: true }`: enables browser scroll optimizations (no perceptible lag on scroll)
 - IntersectionObserver: zero scroll events, browser handles intersection detection
-- Sticky header updates lag slightly with timestamp throttle (acceptable)
+- Sticky header updates lag slightly with timestamp throttle — acceptable for a header
 
 ---
 
@@ -303,18 +371,17 @@ Every scroll event without `passive: true` forces the browser to wait before scr
 
 **Mistake 2: setState on every scroll event**
 
-Even if setState is fast, 60 renders per second is excessive for most scroll-based UI. Throttle to the minimum frequency your UI actually needs (e.g., sticky header only needs to update when it crosses the threshold, not every frame).
+Even if setState is fast, 60 renders per second is excessive for most scroll-based UI. Throttle to the minimum frequency your UI actually needs.
 
-**Mistake 3: Complex calculations in the scroll handler**
+**Mistake 3: Passing options object inline to useInView**
 
 ```jsx
-const handleScroll = () => {
-  const sections = document.querySelectorAll('section'); // DOM query every scroll event!
-  // ...
-};
-```
+// WRONG — new object every render → observer reconnects every render
+const inView = useInView(ref, { threshold: 0.1 });
 
-DOM queries in scroll handlers are expensive (forces layout). Cache the elements in a ref.
+// RIGHT — pass primitive threshold, construct options inside the hook
+const inView = useInView(ref, 0.1);
+```
 
 **Mistake 4: Using scroll events for intersection detection**
 
@@ -322,7 +389,7 @@ Replace `scrollY > element.getBoundingClientRect().top` checks with `Intersectio
 
 **Mistake 5: Not cleaning up scroll listeners**
 
-Unremoved scroll listeners persist after component unmount. Multiple navigations accumulate multiple listeners. Always `removeEventListener` in cleanup.
+Unremoved scroll listeners persist after component unmount. Multiple navigations accumulate multiple listeners. Always `removeEventListener` in cleanup — always store the handler in a variable to pass the exact same reference to both add and remove.
 
 ---
 
@@ -387,7 +454,7 @@ Track `scrollY` with a throttled scroll listener (or RAF). Set a CSS class/style
 A boolean that prevents multiple RAF callbacks from being scheduled. RAF callbacks are queued — without the flag, each scroll event would queue a new callback, defeating the purpose. `ticking=true` means "a frame update is already scheduled, skip this event."
 
 **8. Prevent listener accumulation?**
-Return a cleanup function from `useEffect` that calls `removeEventListener`. The cleanup runs on component unmount and before the effect re-runs. Always store the handler reference in a variable (or ref) to pass the same function to both add and remove.
+Return a cleanup function from `useEffect` that calls `removeEventListener`. Always store the handler reference in a variable to pass the exact same function to both add and remove.
 
 **9. 200ms throttle vs RAF?**
 RAF throttle: 60 updates/second, synced with paint — looks smooth, matches display refresh. 200ms throttle: 5 updates/second — more efficient, but can feel slightly laggy for smooth animations. Choose based on how smooth the visual needs to be: parallax → RAF; sticky header → 100-200ms is fine.
@@ -420,8 +487,8 @@ Missing any one layer can cause jank.
 - RAF throttle: `ticking` flag limits to 1 update per frame (~60fps)
 - Timestamp throttle: explicit N ms interval control
 - IntersectionObserver: off main thread, better than scroll for visibility checks
-- Always removeEventListener in cleanup
-- For sticky header: `scrollY > threshold` → style change + CSS transition
+- Always removeEventListener in cleanup — store handler reference in variable
+- Pass threshold as a primitive to useInView (not an object) to avoid dep instability
 
 ---
 

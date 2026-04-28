@@ -29,13 +29,67 @@ Understand how `useDeferredValue` enables smooth typing even when the search res
 
 ## Exercise Task
 
-### Step 1 — Build the laggy version first
+Create a new file: `src/components/SearchWithLag.jsx`
+
+### Setup — Define shared data and helpers first
+
+Before writing any component, add this at the **top of the file** (outside all components). This is the dataset every component in this exercise will use.
 
 ```jsx
-function SearchWithLag() {
+import React, { useState, useMemo, useDeferredValue, useEffect } from 'react';
+
+// Generate 10,000 items once — stable reference, never re-created
+const generateItems = (count) =>
+  Array.from({ length: count }, (_, i) => ({
+    id: i + 1,
+    name: `Product ${i + 1}`,
+    price: Math.round(Math.random() * 100000) / 100,
+    rating: Math.round(Math.random() * 50) / 10,
+  }));
+
+const ALL_ITEMS = generateItems(10000);
+```
+
+Also add these two shared components below the data. Every step in this exercise reuses them.
+
+```jsx
+// Plain version — no memo. Re-renders on every parent render.
+function HeavyList({ items }) {
+  console.log('HeavyList rendered:', items.length);
+  return (
+    <ul>
+      {items.slice(0, 200).map(item => (
+        <HeavyItem key={item.id} item={item} />
+      ))}
+    </ul>
+  );
+}
+
+function HeavyItem({ item }) {
+  slowOperation(); // simulate expensive render per item
+  return <li>{item.name} — ${item.price} — ⭐{item.rating}</li>;
+}
+
+// Simulates CPU work per item — does not use item intentionally
+function slowOperation() {
+  let result = 0;
+  for (let i = 0; i < 5000; i++) result += i;
+  return result;
+}
+```
+
+> **Note:** `slowOperation` takes no arguments — it just burns CPU cycles to simulate a realistic heavy render. The original guide incorrectly passed `item` to it, which was unused and confusing.
+
+---
+
+### Step 1 — Build the laggy version
+
+Now write `SearchWithLag`. It uses `HeavyList` directly, with no deferral.
+
+```jsx
+export function SearchWithLag() {
   const [query, setQuery] = useState('');
 
-  // Expensive list that re-renders on every query change
   const results = useMemo(() =>
     ALL_ITEMS.filter(item =>
       item.name.toLowerCase().includes(query.toLowerCase())
@@ -54,51 +108,30 @@ function SearchWithLag() {
     </div>
   );
 }
-
-// Simulate expensive rendering — renders 200 items with heavy work
-function HeavyList({ items }) {
-  console.log('HeavyList rendered:', items.length);
-  return (
-    <ul>
-      {items.slice(0, 200).map(item => (
-        <HeavyItem key={item.id} item={item} />
-      ))}
-    </ul>
-  );
-}
-
-function HeavyItem({ item }) {
-  // Simulate expensive render work
-  const expensive = slowOperation(item); // or just render a lot of DOM
-  return (
-    <li>{item.name} — ${item.price} — ⭐{item.rating}</li>
-  );
-}
-
-// Simulate expensive render
-function slowOperation(item) {
-  let result = 0;
-  for (let i = 0; i < 5000; i++) result += i; // 5k iterations per item
-  return result;
-}
 ```
 
-Type in the search box. Observe: the input stutters because React renders `HeavyList` synchronously before the browser can update the input.
+Render `<SearchWithLag />` in `App.jsx` and type in the search box.
+
+**What to observe:** The input stutters on every keystroke. React synchronously renders all 200 `HeavyItem`s (each running `slowOperation`) before the browser can paint the new character in the input. The UI is blocked.
+
+---
 
 ### Step 2 — Apply useDeferredValue
 
+Write a new component `SearchOptimized`. Keep `SearchWithLag` as-is for comparison.
+
 ```jsx
-function SearchOptimized() {
+export function SearchOptimized() {
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query); // lags behind query
 
-  const isStale = query !== deferredQuery; // true while computing
+  const isStale = query !== deferredQuery; // true while deferred render is pending
 
   const results = useMemo(() =>
     ALL_ITEMS.filter(item =>
       item.name.toLowerCase().includes(deferredQuery.toLowerCase())
     ),
-  [deferredQuery]); // depends on DEFERRED value
+  [deferredQuery]); // depends on DEFERRED value, not query
 
   return (
     <div>
@@ -119,14 +152,20 @@ function SearchOptimized() {
 }
 ```
 
-Type again. The input updates immediately (smooth). The results list fades slightly and updates after a brief delay.
+Render `<SearchOptimized />` and type again.
 
-### Step 3 — The critical memo requirement
+> **Important:** At this point the input will still feel laggy. That is expected — `useDeferredValue` alone is not enough. You must complete Step 3 before you see any improvement. The guide's claim that input feels smooth after Step 2 is incorrect — smooth input only happens after Step 3.
 
-`useDeferredValue` alone doesn't give you performance. You MUST wrap the heavy component in `React.memo`:
+---
+
+### Step 3 — Add React.memo (this is what actually makes it fast)
+
+`useDeferredValue` alone does nothing without `React.memo` on the heavy component. Go back to your `HeavyList` definition and **replace** it with this memoized version:
 
 ```jsx
+// REPLACE the plain HeavyList with this memoized version
 const HeavyList = React.memo(function HeavyList({ items }) {
+  console.log('HeavyList rendered:', items.length);
   return (
     <ul>
       {items.slice(0, 200).map(item => (
@@ -137,39 +176,78 @@ const HeavyList = React.memo(function HeavyList({ items }) {
 });
 ```
 
-**Why?** Without `React.memo`, React still renders `HeavyList` on every parent render (every keystroke), defeating the deferral. With `React.memo`, React can skip re-rendering `HeavyList` while the deferred value is computing — because the `items` prop hasn't changed yet (it depends on `deferredQuery`, which is still the old value).
+> **Why replace, not add?** There can only be one `HeavyList` in the file. This replaces the plain function from the Setup section. Do not add a second one — that will cause a duplicate identifier error.
 
-### Step 4 — Observe the rendering behavior
+Now type in `SearchOptimized` again.
 
-Add logs:
+**What to observe:**
+- The input is now smooth — keystrokes paint instantly
+- The results list briefly shows `(updating...)` and fades to 70% opacity
+- The results catch up a moment later
+
+**Why this works:** `useDeferredValue` causes two renders per keystroke:
+1. **Urgent render** — updates `query` (input paints immediately). `HeavyList` receives the old `items` prop. With `React.memo`, it bails out — no re-render.
+2. **Deferred render** — updates `deferredQuery`, recomputes `results`, re-renders `HeavyList` with new items.
+
+Without `React.memo`, the urgent render still calls `HeavyList()` even though `items` didn't change — blocking the input exactly like before.
+
+---
+
+### Step 4 — Observe the rendering behavior with logs
+
+You do not need a new component. **Add these two console.log calls inside the existing `SearchOptimized`** from Step 2:
 
 ```jsx
-function SearchOptimized() {
+export function SearchOptimized() {
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
 
+  // ADD THIS — logs on every render
   console.log(`query="${query}", deferredQuery="${deferredQuery}"`);
 
+  const isStale = query !== deferredQuery;
+
   const results = useMemo(() => {
+    // ADD THIS — logs only when deferredQuery changes
     console.log(`Computing results for: "${deferredQuery}"`);
     return ALL_ITEMS.filter(item =>
       item.name.toLowerCase().includes(deferredQuery.toLowerCase())
     );
   }, [deferredQuery]);
 
-  // ...
+  return (
+    <div>
+      <input
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        placeholder="Search 10k items..."
+      />
+      <p style={{ opacity: isStale ? 0.5 : 1 }}>
+        {results.length} results
+        {isStale && ' (updating...)'}
+      </p>
+      <div style={{ opacity: isStale ? 0.7 : 1 }}>
+        <HeavyList items={results} />
+      </div>
+    </div>
+  );
 }
 ```
 
-Type "r", "e", "a", "c", "t" quickly:
-- You'll see rapid renders where query advances ahead of deferredQuery
-- Eventually deferredQuery catches up
-- HeavyList only re-renders when deferredQuery changes (due to memo + deferred items prop)
+Open DevTools console and type `r`, `e`, `a`, `c`, `t` quickly.
+
+**What to observe in the console:**
+- Many lines of `query="r"... deferredQuery=""`, `query="re"... deferredQuery="r"` etc. — query racing ahead
+- `Computing results for:` fires far less often — only when React gets idle time to commit the deferred render
+- `HeavyList (memo) rendered:` fires only alongside "Computing results" — never on urgent renders
+
+---
 
 ### Step 5 — Compare with debounce
 
+Add the `useDebounce` hook and `SearchDebounced` component. Use `HeavyList` so the workload is the same as `SearchOptimized` — this makes the comparison fair.
+
 ```jsx
-// Debounce approach
 function useDebounce(value, delay) {
   const [debounced, setDebounced] = useState(value);
   useEffect(() => {
@@ -179,12 +257,14 @@ function useDebounce(value, delay) {
   return debounced;
 }
 
-function SearchDebounced() {
+export function SearchDebounced() {
   const [query, setQuery] = useState('');
   const debouncedQuery = useDebounce(query, 300);
 
   const results = useMemo(() =>
-    ALL_ITEMS.filter(item => item.name.includes(debouncedQuery)),
+    ALL_ITEMS.filter(item =>
+      item.name.toLowerCase().includes(debouncedQuery.toLowerCase())
+    ),
   [debouncedQuery]);
 
   return (
@@ -195,30 +275,56 @@ function SearchDebounced() {
         placeholder="Search 10k items..."
       />
       <p>{results.length} results</p>
-      <ul>
-        {results.slice(0, 50).map(item => (
-          <li key={item.id}>{item.name} — ${item.price}</li>
-        ))}
-      </ul>
+      <HeavyList items={results} />
     </div>
   );
 }
 ```
 
+> **Note:** The original guide rendered only 50 plain `<li>` items in `SearchDebounced` — a much lighter workload than `HeavyList`. That made debounce look better than it is. Using `HeavyList` here keeps the comparison honest.
+
+**What to observe:**
+- Input is smooth (debounce delays the state update, so `HeavyList` never renders mid-typing)
+- But results always wait the full 300ms — even if you typed just one character and stopped immediately
+- On a fast machine, `SearchOptimized` feels more responsive because `deferredQuery` catches up quickly when there's no contention
+
 Key difference:
-- **Debounce**: delays triggering the computation by a fixed time (300ms). Input doesn't lag but results wait 300ms even on fast machines.
-- **useDeferredValue**: React immediately starts both renders; defers the heavy one. On fast machines, results update with minimal delay. On slow machines, it defers until idle. Adaptive.
+- **Debounce**: delays triggering the computation by a fixed time (300ms). Predictable but always adds latency.
+- **useDeferredValue**: adaptive. On fast machines, deferred value catches up almost instantly. On slow machines, it defers more. The device determines the delay, not a hardcoded number.
+
+---
+
+### Final file structure
+
+After completing all steps, your file should have this structure (top to bottom):
+
+```
+imports (React, useState, useMemo, useDeferredValue, useEffect)
+
+ALL_ITEMS (data, generated once)
+
+HeavyList (React.memo — updated in Step 3)
+HeavyItem
+slowOperation
+
+SearchWithLag    (export — Step 1)
+SearchOptimized  (export — Steps 2, 3, 4)
+useDebounce      (Step 5 helper)
+SearchDebounced  (export — Step 5)
+```
+
+Render all three exported components in `App.jsx` to observe them side by side.
 
 ---
 
 ## What To Observe
 
 - Without useDeferredValue: input stutters, every keystroke waits for HeavyList
-- With useDeferredValue + memo: input is always smooth, HeavyList updates asynchronously
+- With useDeferredValue but without React.memo: still lags — no improvement at all
+- With useDeferredValue + React.memo: input is always smooth, HeavyList updates asynchronously
 - `query !== deferredQuery` is `true` while results are computing
-- Without React.memo on HeavyList: useDeferredValue has no benefit
 - Debounce: fixed 300ms delay regardless of device speed
-- useDeferredValue: adaptive delay based on device/work load
+- useDeferredValue: adaptive delay based on device/workload
 
 ---
 

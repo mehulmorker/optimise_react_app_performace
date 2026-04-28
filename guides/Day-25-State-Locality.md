@@ -29,6 +29,37 @@ Master the most impactful React architecture principle: keep state as close as p
 
 ## Exercise Task
 
+### Setup — Before you start
+
+Create `src/components/StateLocalityDemo.jsx` with these imports:
+
+```jsx
+import React, { useState, createContext, useContext } from 'react';
+```
+
+Define these minimal stub components at the **top of the file** (before any of the step code). They're placeholders so the App component in Step 1 can actually render:
+
+```jsx
+function Header({ username, theme }) {
+  console.log('Header rendered');
+  return <header style={{ padding: 8, background: '#eee' }}>{username} — {theme}</header>;
+}
+
+function Sidebar() {
+  console.log('Sidebar rendered');
+  return <aside style={{ padding: 8 }}>Sidebar</aside>;
+}
+
+function MainContent() {
+  console.log('MainContent rendered');
+  return <main style={{ padding: 8 }}>Main Content</main>;
+}
+```
+
+You will replace these stubs with different implementations in later steps to observe behavior changes.
+
+---
+
 ### Step 1 — The "state too high" problem
 
 ```jsx

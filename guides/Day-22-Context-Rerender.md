@@ -29,6 +29,18 @@ Understand why React Context causes every consumer to rerender when the context 
 
 ## Exercise Task
 
+Create a new file: `src/components/ContextDemo.jsx`
+
+### Setup — Before you start
+
+```jsx
+import React, {
+  createContext, useContext, useState, useMemo, useReducer
+} from 'react';
+```
+
+---
+
 ### Step 1 — Build the broken context
 
 ```jsx
@@ -58,7 +70,7 @@ function AppProvider({ children }) {
 function Header() {
   const { user, theme } = useContext(AppContext);
   console.log('Header rendered');
-  return <header>{user.name} — {theme}</header>;
+  return <header style={{ padding: 8 }}>{user.name} — {theme}</header>;
 }
 
 function CartBadge() {
@@ -77,7 +89,7 @@ function ThemeToggle() {
   const { theme, setTheme } = useContext(AppContext);
   return (
     <button onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')}>
-      Toggle Theme
+      Toggle Theme ({theme})
     </button>
   );
 }
@@ -90,25 +102,58 @@ function AddToCart() {
     </button>
   );
 }
+
+export function ContextBroken() {
+  return (
+    <AppProvider>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <Header />
+        <CartBadge />
+        <NotificationBell />
+        <ThemeToggle />
+        <AddToCart />
+      </div>
+    </AppProvider>
+  );
+}
 ```
 
-Click **Toggle Theme**. Observe: `CartBadge` and `NotificationBell` both rerender — even though they don't use `theme`. This is the context rerender problem.
+Click **Toggle Theme**. Open the console and observe: `CartBadge` and `NotificationBell` both rerender — even though they don't use `theme`. This is the context rerender problem.
 
 Click **Add to Cart**. Same issue: `Header` and `NotificationBell` rerender even though they don't use `cart`.
 
+---
+
 ### Step 2 — Attempt React.memo (see why it doesn't help)
 
+**Add this variant** — a new export showing the memo attempt:
+
 ```jsx
-const CartBadge = React.memo(function CartBadge() {
+const CartBadgeMemo = React.memo(function CartBadgeMemo() {
   const { cart } = useContext(AppContext);
-  console.log('CartBadge rendered');
-  return <span>{cart.length} items</span>;
+  console.log('CartBadgeMemo rendered');
+  return <span>{cart.length} items (memo)</span>;
 });
+
+export function ContextMemoAttempt() {
+  return (
+    <AppProvider>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <CartBadgeMemo />
+        <ThemeToggle />
+      </div>
+    </AppProvider>
+  );
+}
 ```
 
-Click **Toggle Theme**. `CartBadge` STILL rerenders. `React.memo` only prevents rerenders from parent rerenders. Context changes bypass memo — they're a different subscription mechanism.
+Click **Toggle Theme**. `CartBadgeMemo` STILL rerenders. `React.memo` only prevents rerenders from parent rerenders. Context changes bypass memo — they're a different subscription mechanism.
+
+---
 
 ### Step 3 — Fix by splitting context
+
+Create separate contexts and a new provider. **This is a new set of components** — the split version, not a replacement for Steps 1-2:
 
 ```jsx
 const UserContext = createContext(null);
@@ -116,7 +161,7 @@ const ThemeContext = createContext(null);
 const CartContext = createContext(null);
 const NotificationContext = createContext(null);
 
-function AppProvider({ children }) {
+function SplitAppProvider({ children }) {
   const [user, setUser] = useState({ name: 'Alice', role: 'admin' });
   const [theme, setTheme] = useState('light');
   const [cart, setCart] = useState([]);
@@ -136,47 +181,112 @@ function AppProvider({ children }) {
 }
 
 // Each component subscribes to only its context
-function Header() {
+function HeaderSplit() {
   const { user } = useContext(UserContext);
   const { theme } = useContext(ThemeContext);
-  console.log('Header rendered');
-  return <header>{user.name} — {theme}</header>;
+  console.log('HeaderSplit rendered');
+  return <header style={{ padding: 8 }}>{user.name} — {theme}</header>;
 }
 
-function CartBadge() {
+function CartBadgeSplit() {
   const { cart } = useContext(CartContext);
-  console.log('CartBadge rendered');
+  console.log('CartBadgeSplit rendered');
   return <span>{cart.length} items</span>;
 }
-```
 
-Click **Toggle Theme**. Now only `Header` and `ThemeToggle` rerender. `CartBadge` and `NotificationBell` are unaffected.
-
-### Step 4 — Memoize context values
-
-Even with split contexts, the provider rerenders when its parent rerenders, creating new context value objects:
-
-```jsx
-function ThemeProvider({ children }) {
-  const [theme, setTheme] = useState('light');
-
-  // Without useMemo: new object every render → all consumers rerender
-  // const value = { theme, setTheme };
-
-  // With useMemo: same reference when theme hasn't changed
-  const value = useMemo(() => ({ theme, setTheme }), [theme]);
-
+function ThemeToggleSplit() {
+  const { theme, setTheme } = useContext(ThemeContext);
   return (
-    <ThemeContext.Provider value={value}>
-      {children}
-    </ThemeContext.Provider>
+    <button onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')}>
+      Toggle Theme ({theme})
+    </button>
+  );
+}
+
+function AddToCartSplit() {
+  const { setCart } = useContext(CartContext);
+  return (
+    <button onClick={() => setCart(prev => [...prev, { id: Date.now() }])}>
+      Add to Cart
+    </button>
+  );
+}
+
+export function ContextSplit() {
+  return (
+    <SplitAppProvider>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <HeaderSplit />
+        <CartBadgeSplit />
+        <ThemeToggleSplit />
+        <AddToCartSplit />
+      </div>
+    </SplitAppProvider>
   );
 }
 ```
 
+Click **Toggle Theme**. Now only `HeaderSplit` and `ThemeToggleSplit` rerender. `CartBadgeSplit` is unaffected.
+
+---
+
+### Step 4 — Memoize context values
+
+Even with split contexts, the provider rerenders when its parent rerenders, creating new context value objects. **Update `SplitAppProvider`** to memoize its values:
+
+```jsx
+// REPLACE SplitAppProvider with this memoized version
+function SplitAppProvider({ children }) {
+  const [user, setUser] = useState({ name: 'Alice', role: 'admin' });
+  const [theme, setTheme] = useState('light');
+  const [cart, setCart] = useState([]);
+  const [notifications, setNotifications] = useState(0);
+
+  // Without useMemo: new object every render → all consumers rerender
+  // With useMemo: same reference when value hasn't changed
+  const userValue = useMemo(() => ({ user, setUser }), [user]);
+  const themeValue = useMemo(() => ({ theme, setTheme }), [theme]);
+  const cartValue = useMemo(() => ({ cart, setCart }), [cart]);
+  const notifValue = useMemo(() => ({ notifications, setNotifications }), [notifications]);
+
+  return (
+    <UserContext.Provider value={userValue}>
+      <ThemeContext.Provider value={themeValue}>
+        <CartContext.Provider value={cartValue}>
+          <NotificationContext.Provider value={notifValue}>
+            {children}
+          </NotificationContext.Provider>
+        </CartContext.Provider>
+      </ThemeContext.Provider>
+    </UserContext.Provider>
+  );
+}
+```
+
+---
+
 ### Step 5 — The state/dispatch split pattern
 
-For complex state, separate the data from the updater:
+For complex state, separate the data from the updater. The `dispatch` function from `useReducer` is guaranteed to be stable (same reference forever) — components that only dispatch never need to rerender when state changes.
+
+First, define the reducer:
+
+```jsx
+function cartReducer(state, action) {
+  switch (action.type) {
+    case 'ADD':
+      return [...state, { id: action.id, name: action.name }];
+    case 'REMOVE':
+      return state.filter(item => item.id !== action.id);
+    case 'CLEAR':
+      return [];
+    default:
+      return state;
+  }
+}
+```
+
+Now build the split provider:
 
 ```jsx
 const CartStateContext = createContext(null);
@@ -187,6 +297,7 @@ function CartProvider({ children }) {
 
   return (
     <CartStateContext.Provider value={cart}>
+      {/* dispatch is always the same reference — this context never triggers rerenders */}
       <CartDispatchContext.Provider value={dispatch}>
         {children}
       </CartDispatchContext.Provider>
@@ -194,24 +305,38 @@ function CartProvider({ children }) {
   );
 }
 
-// Components that only dispatch (add/remove) don't rerender when cart changes
-function AddToCartButton({ product }) {
-  const dispatch = useContext(CartDispatchContext); // never changes!
+// Only subscribes to dispatch — NEVER rerenders when cart changes
+function AddToCartDispatch({ productId, productName }) {
+  const dispatch = useContext(CartDispatchContext);
+  console.log('AddToCartDispatch rendered');
   return (
-    <button onClick={() => dispatch({ type: 'ADD', product })}>
+    <button onClick={() => dispatch({ type: 'ADD', id: productId, name: productName })}>
       Add to Cart
     </button>
   );
 }
 
-// Only CartBadge subscribes to cart state
-function CartBadge() {
+// Only subscribes to cart state
+function CartCount() {
   const cart = useContext(CartStateContext);
-  return <span>{cart.length}</span>;
+  console.log('CartCount rendered');
+  return <span>Cart: {cart.length}</span>;
+}
+
+export function ContextDispatchSplit() {
+  return (
+    <CartProvider>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <CartCount />
+        <AddToCartDispatch productId={1} productName="Widget" />
+        <AddToCartDispatch productId={2} productName="Gadget" />
+      </div>
+    </CartProvider>
+  );
 }
 ```
 
-`dispatch` from `useReducer` is guaranteed to be stable (same reference). Splitting state from dispatch means "action" components don't rerender when cart data changes.
+Click either "Add to Cart" button. Only `CartCount` rerenders — the two `AddToCartDispatch` buttons don't rerender because `dispatch` is stable and `CartDispatchContext` never changes.
 
 ---
 
@@ -239,8 +364,6 @@ The comparison is on the **entire value object**. `{ theme: 'dark', user: alice 
 
 `React.memo` intercepts rerenders coming from parent component renders. Context rerenders are triggered through a separate subscription mechanism, **bypassing the normal parent-child rerender path**. Memo has no visibility into this.
 
-Technically: `React.memo` wraps the component in a special fiber type that bails out when props are unchanged. But when context changes, React marks the consumer as "needing update" directly — memo's bailout check isn't invoked in this path.
-
 ### Context value reference stability
 
 ```jsx
@@ -252,9 +375,9 @@ function Provider({ children }) {
   return <MyContext.Provider value={{ count, name }}>
 ```
 
-Every time `Provider` rerenders (for any reason — even its parent rerenders), `{ count, name }` is a new object. `Object.is` returns false. All consumers rerender.
+Every time `Provider` rerenders (for any reason), `{ count, name }` is a new object. `Object.is` returns false. All consumers rerender.
 
-`useMemo(() => ({ count, name }), [count, name])` returns the same reference as long as neither `count` nor `name` changes. Only the relevant dep changes trigger consumer rerenders.
+`useMemo(() => ({ count, name }), [count, name])` returns the same reference as long as neither `count` nor `name` changes.
 
 ---
 
@@ -314,7 +437,7 @@ Even with split contexts, if the provider doesn't memoize the value, a parent re
 
 **Mistake 3: Using context for state that changes frequently**
 
-Context is efficient for infrequently-changing global state (user auth, theme, locale). For frequently-changing state (search query, animation frame, scroll position), context would cause performance issues regardless of optimization. Use local state or a signals-based library.
+Context is efficient for infrequently-changing global state (user auth, theme, locale). For frequently-changing state (search query, animation frame, scroll position), context would cause performance issues regardless of optimization.
 
 **Mistake 4: Selecting from context with useContext then ignoring most of it**
 
@@ -323,11 +446,11 @@ const { user, theme, cart, notifications } = useContext(AppContext);
 // Only uses 'user' but rerenders on ALL changes
 ```
 
-If you're destructuring but only using some properties, split the context or move to a library with selector support.
+If you're destructuring but only using some properties, split the context.
 
 **Mistake 5: Context for prop drilling avoidance in performance-critical paths**
 
-Context subscription has overhead. If a piece of data only needs to go 3 levels deep, direct props (or the children composition pattern) may be more appropriate.
+Context subscription has overhead. If a piece of data only needs to go 3 levels deep, direct props may be more appropriate.
 
 ---
 
@@ -339,22 +462,13 @@ Context subscription has overhead. If a piece of data only needs to go 3 levels 
 function CartBadge() {
   const cart = useContext(CartContext);
   console.log('CartBadge rendered, cart:', cart);
-  // If this logs when you expected it not to, check what changed in CartContext
   return <span>{cart.length}</span>;
 }
 ```
 
 ### React DevTools — "Why did this render?"
 
-Enable "Record why each component rendered" in Profiler. Context-triggered rerenders show as "Context changed" with the context name. This identifies exactly which context subscription is causing unexpected renders.
-
-### WDYR (Why Did You Render)
-
-```jsx
-CartBadge.whyDidYouRender = { logOwnerReasons: true };
-```
-
-WDYR logs when a context consumer rerenders due to a context change, including the old and new values.
+Enable "Record why each component rendered" in Profiler. Context-triggered rerenders show as "Context changed" with the context name.
 
 ---
 
@@ -385,29 +499,29 @@ Context has no partial subscriptions. When the `Provider`'s `value` prop changes
 Each consumer subscribes only to the context it needs. When theme changes, only theme consumers are notified. Cart consumers are unaffected. O(relevant consumers) instead of O(all consumers) per change.
 
 **4. Why memoize context values?**
-Without `useMemo`, every provider render creates a new object reference. `Object.is` returns false on every render. All consumers rerender on every provider render — even when the data didn't change. `useMemo` stabilizes the reference so consumers only rerender when the actual data changes.
+Without `useMemo`, every provider render creates a new object reference. `Object.is` returns false on every render. All consumers rerender on every provider render — even when the data didn't change.
 
 **5. State/dispatch split?**
-Two contexts: one for state (data), one for dispatch (updater). Components that only trigger actions subscribe to `DispatchContext` (whose value — the dispatch function — never changes). They don't rerender when state changes. Only data consumers rerender when state updates.
+Two contexts: one for state (data), one for dispatch (updater). Components that only trigger actions subscribe to `DispatchContext` (whose value — the dispatch function — never changes). They don't rerender when state changes.
 
 **6. When to use state library instead?**
-When: state changes frequently (>10/second), you need granular subscriptions (select specific fields), complex state machines (multi-step workflows), global state shared across deeply nested unrelated components, or you need devtools, time travel, or middleware. Zustand, Jotai, Recoil, Redux Toolkit all offer selector patterns that context doesn't.
+When: state changes frequently (>10/second), you need granular subscriptions (select specific fields), complex state machines, or you need devtools, time travel, or middleware. Zustand, Jotai, Recoil, Redux Toolkit all offer selector patterns that context doesn't.
 
 **7. useReducer + context vs useState + context?**
-Both work for simple cases. `useReducer` is better when state transitions are complex (multiple related state updates via actions), you want predictable state updates (all changes go through `dispatch`), or you want to separate the dispatch function (which is stable) from state for the split pattern.
+`useReducer` is better when state transitions are complex, you want predictable state updates via actions, or you want to separate the dispatch function (which is stable) from state for the split pattern.
 
 **8. Children composition alternative?**
 Instead of `<Parent>` using context to pass data to `<GrandChild>`, compose:
 ```jsx
 <Parent child={<GrandChild data={data} />} />
 ```
-`data` is passed to `GrandChild` at the same level as `Parent`, not through context. No consumer subscription needed.
+`data` is passed to `GrandChild` at the same level as `Parent`, not through context.
 
 **9. Context for frequently-changing state?**
-Technically possible but inefficient. Every change rerenders all consumers. For scroll position, animation frames, real-time data, or any state changing >10 times/second, use local state or a library with fine-grained subscriptions (Jotai, Recoil) that only rerenders the components using the changed atom.
+Technically possible but inefficient. Every change rerenders all consumers. For scroll position, animation frames, or real-time data, use local state or a library with fine-grained subscriptions (Jotai, Recoil).
 
 **10. Zustand selectors vs context?**
-Context: subscribe to entire value, rerender on any change. Zustand: subscribe to a selected slice via a selector function, rerender only when the selected value changes. `useAppStore(state => state.cart.length)` only rerenders when `cart.length` changes — not when `theme` or `user` changes. Fine-grained, prop-level subscriptions.
+Context: subscribe to entire value, rerender on any change. Zustand: subscribe to a selected slice via a selector function, rerender only when the selected value changes. Fine-grained, prop-level subscriptions.
 
 ---
 
@@ -419,29 +533,6 @@ Theme, locale, auth user, feature flags — these change rarely (once per sessio
 
 For cart, notifications, form state, search results — these change frequently. Context will cause too many rerenders. Use local state, URL state, or a dedicated store.
 
-**The "context selector" workaround.**
-
-Some developers implement a selector pattern on top of context:
-
-```jsx
-function useContextSelector(Context, selector) {
-  const context = useContext(Context);
-  const selectedRef = useRef(selector(context));
-  const [, forceUpdate] = useReducer(n => n + 1, 0);
-
-  // Only rerender if selected value changed
-  const newSelected = selector(context);
-  if (!Object.is(selectedRef.current, newSelected)) {
-    selectedRef.current = newSelected;
-    forceUpdate();
-  }
-
-  return selectedRef.current;
-}
-```
-
-This is the basis of libraries like `use-context-selector`. However, it's complex and has subtle issues with React 18 concurrent mode. Consider using Zustand/Jotai instead.
-
 ---
 
 ## Revision Notes
@@ -451,6 +542,7 @@ This is the basis of libraries like `use-context-selector`. However, it's comple
 - Split contexts: each consumer subscribes to only what it needs
 - Always useMemo on context value objects/arrays
 - State/dispatch split: dispatch is stable, reduces "action" component rerenders
+- Define cartReducer (or any reducer) outside the component/provider
 - Context for: rarely-changing global state (theme, auth, locale)
 - Library for: frequently-changing state, fine-grained subscriptions
 

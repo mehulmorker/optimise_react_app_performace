@@ -30,6 +30,44 @@ Learn to catch runtime errors in React component subtrees using `ErrorBoundary` 
 
 ## Exercise Task
 
+### Setup — Before you start
+
+Create `src/components/ErrorBoundaryDemo.jsx` with these imports:
+
+```jsx
+import React, { useState, lazy, Suspense } from 'react';
+```
+
+Define these minimal stub components at the **top of the file**. They're placeholders that represent real dashboard widgets — you'll use them in Steps 4 and 5:
+
+```jsx
+function Header() {
+  return <header style={{ padding: 8, background: '#333', color: 'white' }}>My App</header>;
+}
+
+// Widget that can be made to crash by passing shouldCrash={true}
+function StatsWidget({ shouldCrash }) {
+  if (shouldCrash) throw new Error('StatsWidget failed to load data');
+  return <div style={{ padding: 12, background: '#e8f5e9', borderRadius: 4 }}>Stats: 42 active users</div>;
+}
+
+function RevenueChart({ shouldCrash }) {
+  if (shouldCrash) throw new Error('RevenueChart: data format error');
+  return <div style={{ padding: 12, background: '#e3f2fd', borderRadius: 4 }}>Revenue: $12,400 this week</div>;
+}
+
+function ActivityFeed({ shouldCrash }) {
+  if (shouldCrash) throw new Error('ActivityFeed: connection timeout');
+  return <div style={{ padding: 12, background: '#fff3e0', borderRadius: 4 }}>3 new events today</div>;
+}
+
+function StatsSkeleton() {
+  return <div style={{ padding: 12, background: '#f0f0f0', borderRadius: 4, height: 48 }} />;
+}
+```
+
+---
+
 ### Step 1 — The crashing child (the problem)
 
 ```jsx
@@ -40,7 +78,7 @@ function BrokenWidget({ shouldCrash }) {
   return <div>Widget is working fine.</div>;
 }
 
-function App() {
+export function AppWithoutBoundary() {
   const [crash, setCrash] = useState(false);
 
   return (
@@ -91,7 +129,7 @@ class ErrorBoundary extends React.Component {
 }
 
 // Wrap the crashing child
-function App() {
+export function AppWithBoundary() {
   const [crash, setCrash] = useState(false);
 
   return (
@@ -106,7 +144,7 @@ function App() {
 }
 ```
 
-Click "Crash the widget." The `<h1>` and button stay visible — only the widget subtree is replaced by the fallback. The app continues working.
+Use `<AppWithBoundary />` in `App.jsx` to test. Click "Crash the widget." The `<h1>` and button stay visible — only the widget subtree is replaced by the fallback. The app continues working.
 
 ### Step 3 — Add a reset mechanism
 
@@ -147,33 +185,11 @@ class ErrorBoundary extends React.Component {
 
 Clicking "Try again" clears `hasError`, re-renders `children`. If the underlying error was transient (network glitch, race condition), the child renders normally on retry.
 
-### Step 4 — Granular placement (multiple boundaries)
+### Step 4 — Accepting a custom fallback as a prop (upgrade the ErrorBoundary)
 
-```jsx
-function Dashboard() {
-  return (
-    <div>
-      <Header /> {/* no boundary — if header crashes, we want to know */}
+**Important:** Complete this step before Step 5. Step 5's Dashboard uses the `fallback` prop that you add here.
 
-      <ErrorBoundary fallback={<StatsSkeleton />}>
-        <StatsWidget />
-      </ErrorBoundary>
-
-      <ErrorBoundary fallback={<p>Chart unavailable.</p>}>
-        <RevenueChart />
-      </ErrorBoundary>
-
-      <ErrorBoundary fallback={<p>Activity feed unavailable.</p>}>
-        <ActivityFeed />
-      </ErrorBoundary>
-    </div>
-  );
-}
-```
-
-If `RevenueChart` crashes, `StatsWidget` and `ActivityFeed` remain visible. Granular boundaries = minimal blast radius.
-
-### Step 5 — Accepting a custom fallback as a prop
+REPLACE your `ErrorBoundary` class with this upgraded version that accepts a `fallback` prop and an `onError` callback:
 
 ```jsx
 class ErrorBoundary extends React.Component {
@@ -189,6 +205,7 @@ class ErrorBoundary extends React.Component {
 
   componentDidCatch(error, info) {
     this.props.onError?.(error, info);
+    console.error('ErrorBoundary caught:', error, info.componentStack);
   }
 
   reset() {
@@ -201,26 +218,74 @@ class ErrorBoundary extends React.Component {
         return this.props.fallback;
       }
       return (
-        <div>
-          <p>Something went wrong.</p>
-          <button onClick={this.reset}>Retry</button>
+        <div style={{ padding: 16, background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 4 }}>
+          <h3>Something went wrong</h3>
+          <p>{this.state.error?.message}</p>
+          <button onClick={this.reset}>Try again</button>
         </div>
       );
     }
     return this.props.children;
   }
 }
+```
 
-// Usage with custom fallback
+This boundary now supports:
+- Default fallback (yellow warning box with "Try again" button)
+- Custom `fallback` prop (any JSX)
+- `onError` callback (for logging to Sentry, etc.)
+- `reset()` method (for retry button)
+
+### Step 5 — Granular placement (multiple boundaries)
+
+Now use the upgraded `ErrorBoundary` from Step 4 to isolate each dashboard widget. You can test crashes by adding `shouldCrash` to any widget:
+
+```jsx
+export function Dashboard() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: 16 }}>
+      <Header /> {/* no boundary — if header crashes, we want to know */}
+
+      <ErrorBoundary fallback={<StatsSkeleton />}>
+        <StatsWidget />
+      </ErrorBoundary>
+
+      <ErrorBoundary fallback={<p style={{ padding: 12, color: '#c00' }}>Chart unavailable.</p>}>
+        <RevenueChart />
+      </ErrorBoundary>
+
+      <ErrorBoundary fallback={<p style={{ padding: 12, color: '#c00' }}>Activity feed unavailable.</p>}>
+        <ActivityFeed />
+      </ErrorBoundary>
+    </div>
+  );
+}
+```
+
+Test each widget crashing by temporarily adding `shouldCrash={true}` to `<StatsWidget />`, `<RevenueChart />`, or `<ActivityFeed />`. Each one shows its own fallback; the others remain visible.
+
+If `RevenueChart` crashes, `StatsWidget` and `ActivityFeed` remain visible. Granular boundaries = minimal blast radius.
+
+### Step 6 — Usage with custom fallback and onError callback
+
+The `ErrorBoundary` from Step 4 supports both. Use it with specific fallbacks per widget:
+
+```jsx
+// Custom JSX fallback per boundary
 <ErrorBoundary
-  fallback={<ChartErrorState />}
-  onError={(err, info) => logToSentry(err, info)}
+  fallback={<div style={{ padding: 12, color: '#c00' }}>Chart failed to load.</div>}
+  onError={(err, info) => console.error('Chart crashed:', err.message, info.componentStack)}
 >
   <RevenueChart />
 </ErrorBoundary>
+
+// Default fallback (no fallback prop) — shows yellow "Try again" box
+<ErrorBoundary onError={(err) => console.error('Stats crashed:', err.message)}>
+  <StatsWidget />
+</ErrorBoundary>
 ```
 
-### Step 6 — Pair with React.lazy for chunk load failures
+### Step 7 — Pair with React.lazy for chunk load failures
 
 ```jsx
 const HeavyPanel = lazy(() => import('./HeavyPanel'));
@@ -238,7 +303,7 @@ Two different failure modes, two different tools:
 - Chunk loading (pending) → `Suspense` shows skeleton
 - Chunk failed (network error) → `ErrorBoundary` shows retry
 
-### Step 7 — What error boundaries do NOT catch
+### Step 8 — What error boundaries do NOT catch
 
 ```jsx
 function Component() {
